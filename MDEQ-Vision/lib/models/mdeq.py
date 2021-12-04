@@ -252,7 +252,6 @@ class MDEQSegNet(MDEQNet):
             model_dict.update(pretrained_dict)
             self.load_state_dict(model_dict)
 
-            
 def get_cls_net(config, **kwargs):
     global BN_MOMENTUM
     BN_MOMENTUM = 0.1

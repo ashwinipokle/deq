@@ -4,3 +4,7 @@ from __future__ import print_function
 
 import models.mdeq
 import models.mdeq_core
+
+#Diffusion models
+import models.mdeq_xt
+import models.mdeq_core_xt
