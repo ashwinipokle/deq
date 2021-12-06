@@ -53,6 +53,7 @@ _C.MODEL.SIGMA = 2
 _C.MODEL.EXTRA = CN(new_allowed=True)
 
 # Hyperparams related to DIFFUSION MDEQ
+_C.DIFFUSION_MODEL = CN()
 _C.DIFFUSION_MODEL.TYPE = "simple"
 _C.DIFFUSION_MODEL.CHANNELS = 128
 _C.DIFFUSION_MODEL.OUT_CHANNELS = 3
@@ -60,19 +61,25 @@ _C.DIFFUSION_MODEL.TEMB_CHANNELS = 512
 _C.DIFFUSION_MODEL.EMA_RATE = 0.9999
 _C.DIFFUSION_MODEL.EMA = True
 
+_C.DIFFUSION = CN()
 _C.DIFFUSION.BETA_SCHEDULE = "linear"
 _C.DIFFUSION.BETA_START = 0.0001
 _C.DIFFUSION.BETA_END = 0.02
 _C.DIFFUSION.NUM_DIFFUSIN_TIMESTEPS = 1000
 
+_C.DATA = CN()
 # Data preprocessing for Diffusion models
 _C.DATA.UNIFORM_DEQUANTIZATION = False
 _C.DATA.GAUSSIAN_DEQUANTIZATION = False
 _C.DATA.RESCALED = True 
 _C.DATA.LOGIT_TRANSFORM = False
 _C.DATA.IMAGE_MEAN = False
+_C.DATA.CHANNELS = 3
+_C.DATA.IMAGE_SIZE = 32
 
-_C.TRAIN.CHECKPOINT_FREQ = 10000
+# Sampling from diffusion model
+_C.SAMPLING = CN()
+_C.SAMPLING.BATCH_SIZE = 4
 
 # DEQ related
 _C.DEQ = CN()
@@ -157,6 +164,9 @@ _C.TRAIN.MODEL_FILE = ''
 _C.TRAIN.BATCH_SIZE_PER_GPU = 32
 _C.TRAIN.SHUFFLE = True
 
+# Used for saving checkpoints for diffusion
+_C.TRAIN.CHECKPOINT_FREQ = 1000
+
 # testing
 _C.TEST = CN()
 
@@ -215,7 +225,7 @@ def update_config(cfg, args):
     
     if args.percent < 1:
         cfg.PERCENT = args.percent
-        
+    
     cfg.merge_from_list(args.opts)
 
     cfg.freeze()

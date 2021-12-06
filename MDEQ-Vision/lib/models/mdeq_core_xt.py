@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, n_big_kernels=0, dropout=0.0, wnorm=False):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, n_big_kernels=0, 
+                        dropout=0.0, 
+                        wnorm=False, 
+                        temb_channels=512):
         """
         A canonical residual block with two 3x3 convolutions and an intermediate ReLU. Corresponds to Figure 2
         in the paper.
@@ -63,6 +66,9 @@ class BasicBlock(nn.Module):
         
         self.downsample = downsample
         self.drop = VariationalHidDropout2d(dropout)
+
+        #self.temb_proj = torch.nn.Linear(temb_channels, planes)
+
         if wnorm: self._wnorm()
     
     def _wnorm(self):
@@ -92,8 +98,7 @@ class BasicBlock(nn.Module):
 
         if self.downsample is not None:
             residual = self.downsample(x)
-
-        out += residual
+        out += residual #+ self.temb_proj(temb)
         out = self.gn3(self.relu3(out))
         return out
     
@@ -303,6 +308,58 @@ class MDEQModule(nn.Module):
             x_fuse.append(self.post_fuse_layers[i](y))
         return x_fuse
 
+    # Here temb is temporal embedding
+    # def forward(self, x, temb, injection, *args):
+    #     """
+    #     The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
+    #     a parallel multiscale fusion step.
+    #     """
+    #     if injection is None:
+    #         injection = [0] * len(x)
+    #     if self.num_branches == 1:
+    #         return [self.branches[0](x[0], temb, injection[0])]
+
+    #     # Step 1: Per-resolution residual block
+    #     x_block = []
+    #     for i in range(self.num_branches):
+    #         x_block.append(self.branches[i](x[i], temb, injection[i]))
+        
+    #     # Step 2: Multiscale fusion
+    #     x_fuse = []
+    #     for i in range(self.num_branches):
+    #         y = 0
+    #         # Start fusing all #j -> #i up/down-samplings
+    #         for j in range(self.num_branches):
+    #             y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
+    #         x_fuse.append(self.post_fuse_layers[i](y))
+    #     return x_fuse
+
+class Stage0Block(nn.Module):
+    def __init__(self, in_channels, out_channels=None, conv_shortcut=False,
+                 dropout=0.1, temb_channels=512):
+        super(Stage0Block, self).__init__()
+        self.in_channels = in_channels
+        out_channels = in_channels if out_channels is None else out_channels
+        self.out_channels = out_channels
+        self.use_conv_shortcut = conv_shortcut
+
+        self.stage0_0 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                                                nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
+                                                nn.ReLU(inplace=True))
+
+        self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
+
+        self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
+                                    nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
+                                    nn.ReLU(inplace=True),
+                                    nn.Dropout(dropout))
+
+    def forward(self, x, temb):
+        h = x
+        h = self.stage0_0(x)
+        h = h + self.temb_proj(F.relu(temb))[:, :, None, None]
+        h = self.stage0_1(h)
+        return x+h
 
 class MDEQDiffNet(nn.Module):
 
@@ -338,9 +395,10 @@ class MDEQDiffNet(nn.Module):
             # We use the downsample module above as the injection transformation
             self.stage0 = None
         else:
-            self.stage0 = nn.Sequential(nn.Conv2d(self.init_chansize, self.init_chansize, kernel_size=1, bias=False),
-                                        nn.BatchNorm2d(self.init_chansize, momentum=BN_MOMENTUM, affine=True),
-                                        nn.ReLU(inplace=True))
+            # self.stage0 = nn.Sequential(nn.Conv2d(self.init_chansize, self.init_chansize, kernel_size=1, bias=False),
+            #                             nn.BatchNorm2d(self.init_chansize, momentum=BN_MOMENTUM, affine=True),
+            #                             nn.ReLU(inplace=True))
+            self.stage0 = Stage0Block(self.init_chansize, out_channels=self.init_chansize, dropout=0.1, temb_channels=512)
         
         # PART II: MDEQ's f_\theta layer
         self.fullstage = self._make_stage(self.fullstage_cfg, self.num_channels, dropout=self.dropout)
@@ -406,8 +464,9 @@ class MDEQDiffNet(nn.Module):
         x = self.downsample(x)
         rank = get_rank()
         
+        assert self.stage0 is not None, "Temporal embeddings are not being used"
         # Inject only to the highest resolution...
-        x_list = [self.stage0(x) if self.stage0 else x]
+        x_list = [self.stage0(x, temb) if self.stage0 else x]
         for i in range(1, num_branches):
             bsz, _, H, W = x_list[-1].shape
             x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros
@@ -461,7 +520,7 @@ class MDEQDiffNet(nn.Module):
                 self.hook = new_z1.register_hook(backward_hook)
                 
         y_list = self.iodrop(vec2list(new_z1, cutoffs))
-        
+
         return y_list, jac_loss.view(1,-1), sradius.view(-1,1)
     
     def forward(self, x, train_step=-1, **kwargs):

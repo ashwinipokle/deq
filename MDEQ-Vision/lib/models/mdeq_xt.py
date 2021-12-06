@@ -53,9 +53,6 @@ def get_timestep_embedding(timesteps, embedding_dim):
         emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
     return emb
 
-def Normalize(in_channels):
-    return torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6, affine=True)
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -105,16 +102,13 @@ class MDEQDiffusionNet(MDEQDiffNet):
         Build an MDEQ Segmentation model with the given hyperparameters
         """
         global BN_MOMENTUM
-        super(MDEQDiffusionNet, self).__init__(cfg, BN_MOMENTUM=BN_MOMENTUM, **kwargs)
-        
-        # Last layer
-        last_inp_channels = np.int(np.sum(self.num_channels))
-        self.last_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels, kernel_size=1),
-                                        Normalize(last_inp_channels),
-                                        nn.ReLU(inplace=True),
-                                        nn.Conv2d(last_inp_channels, cfg.DIFFUSION_MODEL.OUT_CHANNELS, kernel_size=3, 
-                                                  stride=1, padding=1))
 
+        self.ch = cfg.DIFFUSION_MODEL.CHANNELS
+
+        super(MDEQDiffusionNet, self).__init__(cfg, BN_MOMENTUM=BN_MOMENTUM, **kwargs)
+        self.head_channels = cfg['MODEL']['EXTRA']['FULL_STAGE']['HEAD_CHANNELS']
+        self.final_chansize = cfg['MODEL']['EXTRA']['FULL_STAGE']['FINAL_CHANSIZE']
+        self.out_chansize = cfg['DIFFUSION_MODEL']['OUT_CHANNELS']
         # timestep embedding
         self.temb = nn.Module()
         self.temb.dense = nn.ModuleList([
@@ -124,19 +118,101 @@ class MDEQDiffusionNet(MDEQDiffNet):
                             cfg.DIFFUSION_MODEL.TEMB_CHANNELS),
         ])
 
-    def predict_noise(self, y):
+        # Classification Head
+        # self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(self.num_channels)
+
+        # Last layer
+        # self.last_layer = nn.Conv2d(self.final_chansize, self.out_chansize, kernel_size=3, 
+        #                                           stride=1, padding=1)
+        
+        last_inp_channels = np.int(np.sum(self.num_channels))
+        self.last_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels//2, kernel_size=1),
+                                        nn.BatchNorm2d(last_inp_channels//2, momentum=BN_MOMENTUM),
+                                        nn.ReLU(inplace=True),
+                                        nn.Conv2d(last_inp_channels//2, self.out_chansize, kernel_size=3, 
+                                                  stride=1, padding=1))
+
+
+    def _make_head(self, pre_stage_channels):
+        """
+        Create a final prediction head that:
+           - Increase the number of features in each resolution 
+           - Downsample higher-resolution equilibria to the lowest-resolution and concatenate
+           - Pass through a final FC layer for classification
+        """
+        head_block = Bottleneck
+        d_model = self.init_chansize
+        head_channels = self.head_channels
+        
+        # Increasing the number of channels on each resolution when doing classification. 
+        incre_modules = []
+        for i, channels  in enumerate(pre_stage_channels):
+            incre_module = self._make_layer(head_block, channels, head_channels[i], blocks=1, stride=1)
+            incre_modules.append(incre_module)
+        incre_modules = nn.ModuleList(incre_modules)
+            
+        # Downsample the high-resolution streams to perform classification
+        downsamp_modules = []
+        for i in range(len(pre_stage_channels)-1):
+            in_channels = head_channels[i] * head_block.expansion
+            out_channels = head_channels[i+1] * head_block.expansion
+            downsamp_module = nn.Sequential(conv3x3(in_channels, out_channels, stride=2, bias=True),
+                                            nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM),
+                                            nn.ReLU(inplace=True))
+            downsamp_modules.append(downsamp_module)
+        downsamp_modules = nn.ModuleList(downsamp_modules)
+
+        # Final FC layers
+        final_layer = nn.Sequential(nn.Conv2d(head_channels[len(pre_stage_channels)-1] * head_block.expansion,
+                                              self.final_chansize, kernel_size=1),
+                                    nn.BatchNorm2d(self.final_chansize, momentum=BN_MOMENTUM),
+                                    nn.ReLU(inplace=True))
+        return incre_modules, downsamp_modules, final_layer
+
+    def _make_layer(self, block, inplanes, planes, blocks, stride=1, padding=0):
+        downsample = None
+        if stride != 1 or inplanes != planes * block.expansion:
+            downsample = nn.Sequential(nn.Conv2d(inplanes, planes*block.expansion, kernel_size=1, stride=stride, bias=False, padding=padding),
+                                       nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM))
+
+        layers = []
+        layers.append(block(inplanes, planes, stride, downsample))
+        inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(block(inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+
+    # def predict_noise(self, y_list):
+    #     """
+    #     Combine all resolutions and output noise
+    #     """
+    #     import pdb; pdb.set_trace()
+    #     y = self.incre_modules[0](y_list[0])
+    #     for i in range(len(self.downsamp_modules)):
+    #         y = self.incre_modules[i+1](y_list[i+1]) + self.downsamp_modules[i](y)
+    #     y = torch.nn.functional.interpolate(
+    #         y, scale_factor=2.0, mode="nearest")
+    #     y = self.final_layer(y)
+    #     y = self.last_layer(y)
+    #     return y
+
+    def predict_noise(self, y_list):
         """
         Combine all resolutions and output noise
         """
-        # Segmentation Head
-        y0_h, y0_w = y[0].size(2), y[0].size(3)
-        all_res = [y[0]]
+        y0_h, y0_w = y_list[0].size(2), y_list[0].size(3)
+        all_res = [y_list[0]]
         for i in range(1, self.num_branches):
-            all_res.append(F.interpolate(y[i], size=(y0_h, y0_w), mode='bilinear', align_corners=True))
+            all_res.append(F.interpolate(y_list[i], size=(y0_h, y0_w), mode='bilinear', align_corners=True))
 
         y = torch.cat(all_res, dim=1)
         all_res = None
         y = self.last_layer(y)
+
+        # y = self.final_layer(y)
+        # y = self.last_layer(y)
         return y
 
     def forward(self, x, t, train_step=0, **kwargs):

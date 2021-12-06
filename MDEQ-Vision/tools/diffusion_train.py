@@ -6,6 +6,7 @@ from __future__ import print_function
 
 import argparse
 import os
+from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
@@ -28,7 +29,7 @@ import _init_paths
 import models
 from config import config
 from config import update_config
-from core.cls_function import train, validate
+from core.diffusion_function import train
 from utils.modelsummary import get_model_summary
 from utils.utils import get_optimizer
 from utils.utils import save_checkpoint
@@ -145,7 +146,8 @@ def main():
         batch_size=config.TRAIN.BATCH_SIZE_PER_GPU*len(gpus),
         shuffle=True,
         num_workers=config.WORKERS,
-        pin_memory=True
+        pin_memory=True,
+        generator=torch.Generator(device='cuda')
     )
     
     # define optimizer
@@ -160,7 +162,7 @@ def main():
     last_epoch = config.TRAIN.BEGIN_EPOCH
 
     if config.TRAIN.RESUME:
-        model_state_file = os.path.join(final_output_dir, 'checkpoint.pth.tar')
+        model_state_file = os.path.join(final_output_dir, 'checkpoint_5474.pth.tar')
         if os.path.isfile(model_state_file):
             checkpoint = torch.load(model_state_file)
             last_epoch = checkpoint['epoch']
@@ -171,8 +173,8 @@ def main():
             checkpoint['optimizer']['param_groups'][0]['weight_decay'] = config.TRAIN.WD
             optimizer.load_state_dict(checkpoint['optimizer'])
             
-            writer_dict['train_global_steps'] = checkpoint['writer_dict']['train_global_steps']
-            writer_dict['valid_global_steps'] = checkpoint['writer_dict']['valid_global_steps']
+            writer_dict['train_global_steps'] = checkpoint['train_global_steps']
+            #writer_dict['valid_global_steps'] = [checkpoint'valid_global_steps']
 
             if 'lr_scheduler' in checkpoint:
                 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_iters, 
@@ -199,10 +201,10 @@ def main():
 
     # Get alpha and beta params
     betas = get_beta_schedule(
-        beta_schedule=config.diffusion.beta_schedule,
-        beta_start=config.diffusion.beta_start,
-        beta_end=config.diffusion.beta_end,
-        num_diffusion_timesteps=config.diffusion.num_diffusion_timesteps,
+        beta_schedule=config.DIFFUSION.BETA_SCHEDULE,
+        beta_start=config.DIFFUSION.BETA_START,
+        beta_end=config.DIFFUSION.BETA_END,
+        num_diffusion_timesteps=config.DIFFUSION.NUM_DIFFUSIN_TIMESTEPS,
     )
     betas = torch.from_numpy(betas).float().cuda()
     num_timesteps = betas.shape[0]
@@ -231,9 +233,10 @@ def main():
         if writer_dict['writer'] is not None:
             writer_dict['writer'].flush()
 
-        logger.info('=> saving checkpoint to {}'.format(final_output_dir))
+        print(f"Outside train {writer_dict['train_global_steps']} {step}")
         if step % config.TRAIN.CHECKPOINT_FREQ == 0:
-            save_checkpoint({
+            logger.info('=> saving checkpoint to {}'.format(final_output_dir))
+            save_checkpoint(states={
                 'epoch': epoch + 1,
                 'step': step,
                 'model': config.MODEL.NAME,
@@ -241,7 +244,7 @@ def main():
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'train_global_steps': writer_dict['train_global_steps'],
-            }, model, final_output_dir, filename=f'checkpoint_{step}.pth.tar')
+            }, is_best=False, output_dir=final_output_dir, filename=f'checkpoint_{step}.pth.tar')
 
     final_model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
     logger.info('saving final model state to {}'.format(final_model_state_file))

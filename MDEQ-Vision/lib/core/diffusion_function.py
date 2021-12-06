@@ -95,14 +95,18 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
     cur_iters = epoch*epoch_iters
     writer = writer_dict['writer']
     global_steps = writer_dict['train_global_steps']
-    assert global_steps == cur_iters, "Step counter problem... fix this?"
+    #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters}")
+    #assert global_steps == cur_iters, f"Step counter problem... fix this? {global_steps} {cur_iters}"
     update_freq = config.LOSS.JAC_INCREMENTAL
 
     # Distributed information
     rank = get_rank()
     world_size = get_world_size()
 
-    for i_iter, x in enumerate(trainloader):
+    print("CUDA AVAILABLE ", torch.cuda.is_available())
+    for i_iter, batch in enumerate(trainloader):
+        #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters}")
+        x, labels = batch
         step += 1
         n = x.size(0)
         x = x.cuda()
@@ -153,6 +157,7 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
         optimizer.step()
         if config.TRAIN.LR_SCHEDULER == 'cosine':
             lr_scheduler.step()
+            lr = optimizer.param_groups[0]['lr']
         else:
             # If LR scheduler is None
             lr = adjust_learning_rate(optimizer, base_lr, num_iters, i_iter+cur_iters)
@@ -160,9 +165,9 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
         # TODO: Update EMA if needed
 
         # update average loss
-        ave_loss.update(loss.item(), input.size(0))
+        ave_loss.update(loss.item(), x.size(0))
         if compute_jac_loss:
-            ave_jac_loss.update(jac_loss.item(), input.size(0))
+            ave_jac_loss.update(jac_loss.item(), x.size(0))
 
         # measure elapsed time (modeling + data + sync)
         batch_time.update(time.time() - tic)
@@ -179,9 +184,10 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
 
         global_steps += 1
         writer_dict['train_global_steps'] = global_steps
+        #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters} cur_iter {i_iter}")
 
         if factor > 0 and global_steps > config.TRAIN.PRETRAIN_STEPS and deq_steps % update_freq == 0:
              logger.info(f'Note: Adding 0.1 to Jacobian regularization weight.')
-             
+    #print(writer_dict['train_global_steps'], global_steps, cur_iters, step)
     return step
 

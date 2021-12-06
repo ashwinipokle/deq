@@ -252,6 +252,5 @@ def main():
     if writer_dict['writer'] is not None:
         writer_dict['writer'].close()
 
-
 if __name__ == '__main__':
     main()
