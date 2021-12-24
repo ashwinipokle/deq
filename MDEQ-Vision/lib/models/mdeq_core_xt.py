@@ -37,6 +37,9 @@ DEQ_EXPAND = 5        # Don't change the value here. The value is controlled by 
 NUM_GROUPS = 4        # Don't change the value here. The value is controlled by the yaml files.
 logger = logging.getLogger(__name__)
 
+def nonlinearity(x):
+    # swish
+    return x*torch.sigmoid(x)
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -121,7 +124,6 @@ class BranchNet(nn.Module):
         for i in range(1, len(blocks)):
             y = blocks[i](y)
         return y
-    
     
 class DownsampleModule(nn.Module):
     def __init__(self, num_channels, in_res, out_res):
@@ -283,31 +285,6 @@ class MDEQModule(nn.Module):
 
     def get_num_inchannels(self):
         return self.num_channels
-
-    # def forward(self, x, injection, *args):
-    #     """
-    #     The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
-    #     a parallel multiscale fusion step.
-    #     """
-    #     if injection is None:
-    #         injection = [0] * len(x)
-    #     if self.num_branches == 1:
-    #         return [self.branches[0](x[0], injection[0])]
-
-    #     # Step 1: Per-resolution residual block
-    #     x_block = []
-    #     for i in range(self.num_branches):
-    #         x_block.append(self.branches[i](x[i], injection[i]))
-        
-    #     # Step 2: Multiscale fusion
-    #     x_fuse = []
-    #     for i in range(self.num_branches):
-    #         y = 0
-    #         # Start fusing all #j -> #i up/down-samplings
-    #         for j in range(self.num_branches):
-    #             y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
-    #         x_fuse.append(self.post_fuse_layers[i](y))
-    #     return x_fuse
 
     # Here temb is temporal embedding
     def forward(self, x, temb, injection, *args):
