@@ -103,9 +103,9 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
     rank = get_rank()
     world_size = get_world_size()
 
-    print("CUDA AVAILABLE ", torch.cuda.is_available())
     for i_iter, batch in enumerate(trainloader):
         #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters}")
+        #import pdb; pdb.set_trace()
         x, labels = batch
         step += 1
         n = x.size(0)

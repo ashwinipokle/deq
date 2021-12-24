@@ -133,55 +133,55 @@ class MDEQDiffusionNet(MDEQDiffNet):
                                                   stride=1, padding=1))
 
 
-    def _make_head(self, pre_stage_channels):
-        """
-        Create a final prediction head that:
-           - Increase the number of features in each resolution 
-           - Downsample higher-resolution equilibria to the lowest-resolution and concatenate
-           - Pass through a final FC layer for classification
-        """
-        head_block = Bottleneck
-        d_model = self.init_chansize
-        head_channels = self.head_channels
+    # def _make_head(self, pre_stage_channels):
+    #     """
+    #     Create a final prediction head that:
+    #        - Increase the number of features in each resolution 
+    #        - Downsample higher-resolution equilibria to the lowest-resolution and concatenate
+    #        - Pass through a final FC layer for classification
+    #     """
+    #     head_block = Bottleneck
+    #     d_model = self.init_chansize
+    #     head_channels = self.head_channels
         
-        # Increasing the number of channels on each resolution when doing classification. 
-        incre_modules = []
-        for i, channels  in enumerate(pre_stage_channels):
-            incre_module = self._make_layer(head_block, channels, head_channels[i], blocks=1, stride=1)
-            incre_modules.append(incre_module)
-        incre_modules = nn.ModuleList(incre_modules)
+    #     # Increasing the number of channels on each resolution when doing classification. 
+    #     incre_modules = []
+    #     for i, channels  in enumerate(pre_stage_channels):
+    #         incre_module = self._make_layer(head_block, channels, head_channels[i], blocks=1, stride=1)
+    #         incre_modules.append(incre_module)
+    #     incre_modules = nn.ModuleList(incre_modules)
             
         # Downsample the high-resolution streams to perform classification
-        downsamp_modules = []
-        for i in range(len(pre_stage_channels)-1):
-            in_channels = head_channels[i] * head_block.expansion
-            out_channels = head_channels[i+1] * head_block.expansion
-            downsamp_module = nn.Sequential(conv3x3(in_channels, out_channels, stride=2, bias=True),
-                                            nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM),
-                                            nn.ReLU(inplace=True))
-            downsamp_modules.append(downsamp_module)
-        downsamp_modules = nn.ModuleList(downsamp_modules)
+    #     downsamp_modules = []
+    #     for i in range(len(pre_stage_channels)-1):
+    #         in_channels = head_channels[i] * head_block.expansion
+    #         out_channels = head_channels[i+1] * head_block.expansion
+    #         downsamp_module = nn.Sequential(conv3x3(in_channels, out_channels, stride=2, bias=True),
+    #                                         nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM),
+    #                                         nn.ReLU(inplace=True))
+    #         downsamp_modules.append(downsamp_module)
+    #     downsamp_modules = nn.ModuleList(downsamp_modules)
 
-        # Final FC layers
-        final_layer = nn.Sequential(nn.Conv2d(head_channels[len(pre_stage_channels)-1] * head_block.expansion,
-                                              self.final_chansize, kernel_size=1),
-                                    nn.BatchNorm2d(self.final_chansize, momentum=BN_MOMENTUM),
-                                    nn.ReLU(inplace=True))
-        return incre_modules, downsamp_modules, final_layer
+    #     # Final FC layers
+    #     final_layer = nn.Sequential(nn.Conv2d(head_channels[len(pre_stage_channels)-1] * head_block.expansion,
+    #                                           self.final_chansize, kernel_size=1),
+    #                                 nn.BatchNorm2d(self.final_chansize, momentum=BN_MOMENTUM),
+    #                                 nn.ReLU(inplace=True))
+    #     return incre_modules, downsamp_modules, final_layer
 
-    def _make_layer(self, block, inplanes, planes, blocks, stride=1, padding=0):
-        downsample = None
-        if stride != 1 or inplanes != planes * block.expansion:
-            downsample = nn.Sequential(nn.Conv2d(inplanes, planes*block.expansion, kernel_size=1, stride=stride, bias=False, padding=padding),
-                                       nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM))
+    # def _make_layer(self, block, inplanes, planes, blocks, stride=1, padding=0):
+    #     downsample = None
+    #     if stride != 1 or inplanes != planes * block.expansion:
+    #         downsample = nn.Sequential(nn.Conv2d(inplanes, planes*block.expansion, kernel_size=1, stride=stride, bias=False, padding=padding),
+    #                                    nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM))
 
-        layers = []
-        layers.append(block(inplanes, planes, stride, downsample))
-        inplanes = planes * block.expansion
-        for i in range(1, blocks):
-            layers.append(block(inplanes, planes))
+    #     layers = []
+    #     layers.append(block(inplanes, planes, stride, downsample))
+    #     inplanes = planes * block.expansion
+    #     for i in range(1, blocks):
+    #         layers.append(block(inplanes, planes))
 
-        return nn.Sequential(*layers)
+    #     return nn.Sequential(*layers)
 
 
     # def predict_noise(self, y_list):

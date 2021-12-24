@@ -67,7 +67,7 @@ class BasicBlock(nn.Module):
         self.downsample = downsample
         self.drop = VariationalHidDropout2d(dropout)
 
-        #self.temb_proj = torch.nn.Linear(temb_channels, planes)
+        self.temb_proj = torch.nn.Linear(temb_channels, planes)
 
         if wnorm: self._wnorm()
     
@@ -88,7 +88,8 @@ class BasicBlock(nn.Module):
             self.conv2_fn.reset(self.conv2)
         self.drop.reset_mask(bsz, d, H, W)
             
-    def forward(self, x, injection=None):
+    def forward(self, x, temb, injection=None):
+        #import pdb; pdb.set_trace()
         if injection is None: injection = 0
         residual = x
 
@@ -98,7 +99,7 @@ class BasicBlock(nn.Module):
 
         if self.downsample is not None:
             residual = self.downsample(x)
-        out += residual #+ self.temb_proj(temb)
+        out += residual + self.temb_proj(F.relu(temb))[:, :, None, None]
         out = self.gn3(self.relu3(out))
         return out
     
@@ -114,9 +115,9 @@ class BranchNet(nn.Module):
         super().__init__()
         self.blocks = blocks
     
-    def forward(self, x, injection=None):
+    def forward(self, x, temb, injection=None):
         blocks = self.blocks
-        y = blocks[0](x, injection)
+        y = blocks[0](x, temb, injection)
         for i in range(1, len(blocks)):
             y = blocks[i](y)
         return y
@@ -283,33 +284,7 @@ class MDEQModule(nn.Module):
     def get_num_inchannels(self):
         return self.num_channels
 
-    def forward(self, x, injection, *args):
-        """
-        The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
-        a parallel multiscale fusion step.
-        """
-        if injection is None:
-            injection = [0] * len(x)
-        if self.num_branches == 1:
-            return [self.branches[0](x[0], injection[0])]
-
-        # Step 1: Per-resolution residual block
-        x_block = []
-        for i in range(self.num_branches):
-            x_block.append(self.branches[i](x[i], injection[i]))
-        
-        # Step 2: Multiscale fusion
-        x_fuse = []
-        for i in range(self.num_branches):
-            y = 0
-            # Start fusing all #j -> #i up/down-samplings
-            for j in range(self.num_branches):
-                y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
-            x_fuse.append(self.post_fuse_layers[i](y))
-        return x_fuse
-
-    # Here temb is temporal embedding
-    # def forward(self, x, temb, injection, *args):
+    # def forward(self, x, injection, *args):
     #     """
     #     The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
     #     a parallel multiscale fusion step.
@@ -317,12 +292,12 @@ class MDEQModule(nn.Module):
     #     if injection is None:
     #         injection = [0] * len(x)
     #     if self.num_branches == 1:
-    #         return [self.branches[0](x[0], temb, injection[0])]
+    #         return [self.branches[0](x[0], injection[0])]
 
     #     # Step 1: Per-resolution residual block
     #     x_block = []
     #     for i in range(self.num_branches):
-    #         x_block.append(self.branches[i](x[i], temb, injection[i]))
+    #         x_block.append(self.branches[i](x[i], injection[i]))
         
     #     # Step 2: Multiscale fusion
     #     x_fuse = []
@@ -333,6 +308,33 @@ class MDEQModule(nn.Module):
     #             y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
     #         x_fuse.append(self.post_fuse_layers[i](y))
     #     return x_fuse
+
+    # Here temb is temporal embedding
+    def forward(self, x, temb, injection, *args):
+        """
+        The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
+        a parallel multiscale fusion step.
+        """
+        #import pdb; pdb.set_trace()
+        if injection is None:
+            injection = [0] * len(x)
+        if self.num_branches == 1:
+            return [self.branches[0](x[0], temb, injection[0])]
+
+        # Step 1: Per-resolution residual block
+        x_block = []
+        for i in range(self.num_branches):
+            x_block.append(self.branches[i](x[i], temb, injection[i]))
+        
+        # Step 2: Multiscale fusion
+        x_fuse = []
+        for i in range(self.num_branches):
+            y = 0
+            # Start fusing all #j -> #i up/down-samplings
+            for j in range(self.num_branches):
+                y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
+            x_fuse.append(self.post_fuse_layers[i](y))
+        return x_fuse
 
 class Stage0Block(nn.Module):
     def __init__(self, in_channels, out_channels=None, conv_shortcut=False,
@@ -474,7 +476,7 @@ class MDEQDiffNet(nn.Module):
         z_list = [torch.zeros_like(elem) for elem in x_list]
         z1 = list2vec(z_list)
         cutoffs = [(elem.size(1), elem.size(2), elem.size(3)) for elem in z_list]
-        func = lambda z: list2vec(self.fullstage(vec2list(z, cutoffs), x_list))
+        func = lambda z: list2vec(self.fullstage(vec2list(z, cutoffs), temb, x_list))
         
         # For variational dropout mask resetting and weight normalization re-computations
         self.fullstage._reset(z_list)
@@ -514,11 +516,13 @@ class MDEQDiffNet(nn.Module):
                     if self.hook is not None:
                         self.hook.remove()
                         torch.cuda.synchronize()
+                    #import pdb; pdb.set_trace()
                     result = self.b_solver(lambda y: autograd.grad(new_z1, z1, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
                                           threshold=b_thres, stop_mode=self.stop_mode, name="backward")
+                    #import pdb; pdb.set_trace()
                     return result['result']
                 self.hook = new_z1.register_hook(backward_hook)
-                
+        #import pdb; pdb.set_trace()
         y_list = self.iodrop(vec2list(new_z1, cutoffs))
 
         return y_list, jac_loss.view(1,-1), sradius.view(-1,1)

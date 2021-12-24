@@ -233,8 +233,8 @@ def main():
         if writer_dict['writer'] is not None:
             writer_dict['writer'].flush()
 
-        print(f"Outside train {writer_dict['train_global_steps']} {step}")
-        if step % config.TRAIN.CHECKPOINT_FREQ == 0:
+        print(f"Outside train {writer_dict['train_global_steps']} {step} {config.TRAIN.CHECKPOINT_FREQ} {step % config.TRAIN.CHECKPOINT_FREQ}")
+        if epoch % config.TRAIN.CHECKPOINT_FREQ == 0:
             logger.info('=> saving checkpoint to {}'.format(final_output_dir))
             save_checkpoint(states={
                 'epoch': epoch + 1,

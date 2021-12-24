@@ -143,7 +143,10 @@ def main():
     cudnn.benchmark = config.CUDNN.BENCHMARK
     torch.backends.cudnn.deterministic = config.CUDNN.DETERMINISTIC
     torch.backends.cudnn.enabled = config.CUDNN.ENABLED
-    
+   
+    # Create folder to save images
+    if not os.path.exists(args.image_folder):
+        os.mkdir(args.image_folder) 
     model = eval('models.'+ config.MODEL.NAME+'.get_diffusion_net')(config).cuda()
     
     if config.TRAIN.MODEL_FILE:
@@ -167,15 +170,18 @@ def main():
     model = nn.DataParallel(model, device_ids=gpus).cuda()
     print("Finished constructing model!")
 
-    if config.TRAIN.RESUME:
-        model_state_file = os.path.join(final_output_dir, 'checkpoint_5474.pth.tar')
-        if os.path.isfile(model_state_file):
-            checkpoint = torch.load(model_state_file)
-            model.module.load_state_dict(checkpoint['state_dict'])
-            logger.info("=> loaded checkpoint (epoch {})".format(checkpoint['epoch']))
-   
+    model_state_file = os.path.join(final_output_dir, 'checkpoint_63011.pth.tar')
+    #model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
+    if os.path.isfile(model_state_file):
+        checkpoint = torch.load(model_state_file)
+        model.module.load_state_dict(checkpoint['state_dict'])
+        #model.module.load_state_dict(checkpoint)
+        logger.info("=> loaded checkpoint {}".format(model_state_file))
+    else:
+        raise ValueError("Checkpoint not loaded!")
     # Currently not adding EMA
     # TODO: Add EMA if needed 
+    sample(model, args, config)
 
 
 def sample(model, args, config):
@@ -189,20 +195,19 @@ def sample_fid(model, args, config):
     img_id = len(glob.glob(f"{args.image_folder}/*"))
     print(f"starting from image {img_id}")
     total_n_samples = 50000
-    n_rounds = (total_n_samples - img_id) // config.sampling.batch_size
+    n_rounds = (total_n_samples - img_id) // config.SAMPLING.BATCH_SIZE
 
     with torch.no_grad():
         for _ in tqdm.tqdm(
             range(n_rounds), desc="Generating image samples for FID evaluation."
         ):
-            n = config.sampling.batch_size
+            n = config.SAMPLING.BATCH_SIZE
             x = torch.randn(
                 n,
                 config.DATA.CHANNELS,
                 config.DATA.IMAGE_SIZE,
                 config.DATA.IMAGE_SIZE,
-                device=model.device,
-            )
+            ).cuda()
 
             x = sample_image(x, model, args, config)
             if type(x) == dict:
@@ -262,7 +267,7 @@ def sample_image(x, model, args, config, last=True):
         use_wandb = False
         if use_wandb:
             wandb.init( project="DDIM-9-15", 
-                        name=f"DDIM-anderson-{len(seq)}",
+                        name=f"DDIM-mdeq-temb-{len(seq)}",
                         reinit=True,
                         config=config)
             logger = wandb.log
@@ -295,7 +300,7 @@ def generalized_steps(x, seq, model, b, logger=None, print_logs=False, **kwargs)
             at = compute_alpha(b, t.long())
             at_next = compute_alpha(b, next_t.long())
             xt = xs[-1].to('cuda')
-            et = model(xt, t)
+            et = model(xt, t)[0]
             x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
             x0_preds.append(x0_t.to('cpu'))
             c1 = (

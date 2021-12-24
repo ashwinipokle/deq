@@ -77,13 +77,10 @@ _C.DATA.IMAGE_MEAN = False
 _C.DATA.CHANNELS = 3
 _C.DATA.IMAGE_SIZE = 32
 
-<<<<<<< Updated upstream
 # Sampling from diffusion model
 _C.SAMPLING = CN()
 _C.SAMPLING.BATCH_SIZE = 4
 
-=======
->>>>>>> Stashed changes
 # DEQ related
 _C.DEQ = CN()
 _C.DEQ.F_SOLVER = 'broyden'
@@ -169,7 +166,6 @@ _C.TRAIN.SHUFFLE = True
 
 # Used for saving checkpoints for diffusion
 _C.TRAIN.CHECKPOINT_FREQ = 10000
->>>>>>> Stashed changes
 
 # testing
 _C.TEST = CN()
