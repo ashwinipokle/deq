@@ -41,6 +41,13 @@ def nonlinearity(x):
     # swish
     return x*torch.sigmoid(x)
 
+class SwishActivation(nn.Module):
+    def __init__(self) -> None:
+        super(SwishActivation, self).__init__()
+    
+    def forward(self, x):
+        return nonlinearity(x)
+
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -59,14 +66,17 @@ class BasicBlock(nn.Module):
 
         self.conv1 = conv1(inplanes, inner_planes)
         self.gn1 = nn.GroupNorm(NUM_GROUPS, inner_planes, affine=BLOCK_GN_AFFINE)
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
         
         self.conv2 = conv2(inner_planes, planes)
         self.gn2 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
 
+        self.conv3 = conv2(planes, planes)
         self.gn3 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
-        self.relu3 = nn.ReLU(inplace=True)
+        #self.relu3 = nn.ReLU(inplace=True)
         
+        self.gn4 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
+
         self.downsample = downsample
         self.drop = VariationalHidDropout2d(dropout)
 
@@ -92,18 +102,17 @@ class BasicBlock(nn.Module):
         self.drop.reset_mask(bsz, d, H, W)
             
     def forward(self, x, temb, injection=None):
-        #import pdb; pdb.set_trace()
         if injection is None: injection = 0
         residual = x
 
-        out = self.relu(self.gn1(self.conv1(x)))
+        out = nonlinearity(self.gn1(self.conv1(x)))
         out = self.drop(self.conv2(out)) + injection
         out = self.gn2(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
-        out += residual + self.temb_proj(F.relu(temb))[:, :, None, None]
-        out = self.gn3(self.relu3(out))
+        out += residual + self.temb_proj(nonlinearity(temb))[:, :, None, None]
+        out = self.gn4(nonlinearity(self.conv3(self.gn3(out))))
         return out
     
        
@@ -143,7 +152,7 @@ class DownsampleModule(nn.Module):
             components = [('conv', nn.Conv2d(inp_chan, intermediate_out, **kwargs)), 
                           ('gnorm', nn.GroupNorm(NUM_GROUPS, intermediate_out, affine=FUSE_GN_AFFINE))]
             if k != (level_diff-1):
-                components.append(('relu', nn.ReLU(inplace=True)))
+                components.append(('activation', SwishActivation()))
             convs.append(nn.Sequential(OrderedDict(components)))
         self.net = nn.Sequential(*convs)  
             
@@ -189,7 +198,7 @@ class MDEQModule(nn.Module):
         self.fuse_layers = self._make_fuse_layers()
         self.post_fuse_layers = nn.ModuleList([
             nn.Sequential(OrderedDict([
-                ('relu', nn.ReLU(False)),
+                ('activation', SwishActivation()),
                 ('conv', nn.Conv2d(num_channels[i], num_channels[i], kernel_size=1, bias=False)),
                 ('gnorm', nn.GroupNorm(NUM_GROUPS // 2, num_channels[i], affine=POST_GN_AFFINE))
             ])) for i in range(num_branches)])
@@ -292,7 +301,6 @@ class MDEQModule(nn.Module):
         The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
         a parallel multiscale fusion step.
         """
-        #import pdb; pdb.set_trace()
         if injection is None:
             injection = [0] * len(x)
         if self.num_branches == 1:
@@ -323,22 +331,21 @@ class Stage0Block(nn.Module):
         self.use_conv_shortcut = conv_shortcut
 
         self.stage0_0 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-                                                nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
-                                                nn.ReLU(inplace=True))
+                                                nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True))
 
-        self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
+        # self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
 
-        self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
-                                    nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
-                                    nn.ReLU(inplace=True),
-                                    nn.Dropout(dropout))
+        # self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
+        #                             nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
+        #                             nn.ReLU(inplace=True),
+        #                             nn.Dropout(dropout))
 
-    def forward(self, x, temb):
+    def forward(self, x):
         h = x
-        h = self.stage0_0(x)
-        h = h + self.temb_proj(F.relu(temb))[:, :, None, None]
-        h = self.stage0_1(h)
-        return x+h
+        h = nonlinearity(self.stage0_0(x))
+        # h = h + self.temb_proj(nonlinearity(temb))[:, :, None, None]
+        # h = self.stage0_1(h)
+        return h #x+h
 
 class MDEQDiffNet(nn.Module):
 
@@ -358,25 +365,22 @@ class MDEQDiffNet(nn.Module):
         self.downsample = nn.Sequential(
             conv3x3(3, init_chansize, stride=(2 if self.downsample_times >= 1 else 1)),
             nn.BatchNorm2d(init_chansize, momentum=BN_MOMENTUM, affine=True),
-            nn.ReLU(inplace=True),
+            SwishActivation(),
             conv3x3(init_chansize, init_chansize, stride=(2 if self.downsample_times >= 2 else 1)),
             nn.BatchNorm2d(init_chansize, momentum=BN_MOMENTUM, affine=True),
-            nn.ReLU(inplace=True))
+            SwishActivation())
 
         if self.downsample_times > 2:
             for i in range(3, self.downsample_times+1):
                 self.downsample.add_module(f"DS{i}", conv3x3(init_chansize, init_chansize, stride=2))
                 self.downsample.add_module(f"DS{i}-BN", nn.BatchNorm2d(init_chansize, momentum=BN_MOMENTUM, affine=True))
-                self.downsample.add_module(f"DS{i}-RELU", nn.ReLU(inplace=True))
+                self.downsample.add_module(f"DS{i}-ACTIVATION", SwishActivation())
         
         # PART I: Input injection module
         if self.downsample_times == 0 and self.num_branches <= 2:
             # We use the downsample module above as the injection transformation
             self.stage0 = None
         else:
-            # self.stage0 = nn.Sequential(nn.Conv2d(self.init_chansize, self.init_chansize, kernel_size=1, bias=False),
-            #                             nn.BatchNorm2d(self.init_chansize, momentum=BN_MOMENTUM, affine=True),
-            #                             nn.ReLU(inplace=True))
             self.stage0 = Stage0Block(self.init_chansize, out_channels=self.init_chansize, dropout=0.1, temb_channels=512)
         
         # PART II: MDEQ's f_\theta layer
@@ -443,9 +447,9 @@ class MDEQDiffNet(nn.Module):
         x = self.downsample(x)
         rank = get_rank()
         
-        assert self.stage0 is not None, "Temporal embeddings are not being used"
+        # assert self.stage0 is not None, "Temporal embeddings are not being used"
         # Inject only to the highest resolution...
-        x_list = [self.stage0(x, temb) if self.stage0 else x]
+        x_list = [self.stage0(x) if self.stage0 else x]
         for i in range(1, num_branches):
             bsz, _, H, W = x_list[-1].shape
             x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros
@@ -462,6 +466,7 @@ class MDEQDiffNet(nn.Module):
         sradius = torch.zeros(bsz, 1).to(x)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
         
+        #import pdb; pdb.set_trace()
         # Multiscale Deep Equilibrium!
         if not deq_mode:
             for layer_ind in range(self.num_layers): 
@@ -493,13 +498,12 @@ class MDEQDiffNet(nn.Module):
                     if self.hook is not None:
                         self.hook.remove()
                         torch.cuda.synchronize()
-                    #import pdb; pdb.set_trace()
+                        
                     result = self.b_solver(lambda y: autograd.grad(new_z1, z1, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
                                           threshold=b_thres, stop_mode=self.stop_mode, name="backward")
-                    #import pdb; pdb.set_trace()
                     return result['result']
                 self.hook = new_z1.register_hook(backward_hook)
-        #import pdb; pdb.set_trace()
+
         y_list = self.iodrop(vec2list(new_z1, cutoffs))
 
         return y_list, jac_loss.view(1,-1), sradius.view(-1,1)
