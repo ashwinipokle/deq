@@ -131,7 +131,7 @@ class BranchNet(nn.Module):
         blocks = self.blocks
         y = blocks[0](x, temb, injection)
         for i in range(1, len(blocks)):
-            y = blocks[i](y)
+            y = blocks[i](y, temb)
         return y
     
 class DownsampleModule(nn.Module):
