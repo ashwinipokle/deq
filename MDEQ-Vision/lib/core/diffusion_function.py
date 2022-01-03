@@ -84,7 +84,7 @@ def data_transform(config, X):
     return X
 
 def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, num_iters,
-         trainloader, optimizer, lr_scheduler, model, writer_dict, step):
+         trainloader, optimizer, lr_scheduler, model, writer_dict, step, ema_helper):
     
     # Training
     model.train()
@@ -135,19 +135,20 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
         b_thres = config.DEQ.B_THRES
 
         a = (1-betas).cumprod(dim=0).index_select(0, t).view(-1, 1, 1, 1)
-        x = x * a.sqrt() + e * (1.0 - a).sqrt()
+        xt = x * a.sqrt() + e * (1.0 - a).sqrt()
         
-        output, jac_loss, _ = model(x, t.float(), train_step=global_steps, 
+        output, jac_loss, _ = model(xt, t.float(), train_step=global_steps, 
                                        compute_jac_loss=compute_jac_loss,
                                        f_thres=f_thres, b_thres=b_thres, writer=writer)
         
         losses = (e - output).square().sum(dim=(1, 2, 3))
             
-        loss = losses.mean()
+        loss = losses.mean(dim=0)
         jac_loss = jac_loss.mean()
 
         # compute gradient and do update step
         optimizer.zero_grad()
+        
         if factor > 0:
             (loss + factor*jac_loss).backward()
         else:
@@ -162,7 +163,8 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
             # If LR scheduler is None
             lr = adjust_learning_rate(optimizer, base_lr, num_iters, i_iter+cur_iters)
         
-        # TODO: Update EMA if needed
+        if config.DIFFUSION_MODEL.EMA:
+            ema_helper.update(model)
 
         # update average loss
         ave_loss.update(loss.item(), x.size(0))

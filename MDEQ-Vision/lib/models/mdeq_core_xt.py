@@ -55,6 +55,8 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         conv1 = conv5x5 if n_big_kernels >= 1 else conv3x3
         conv2 = conv5x5 if n_big_kernels >= 2 else conv3x3
+        conv3 = conv5x5 if n_big_kernels >= 2 else conv3x3
+
         inner_planes = int(DEQ_EXPAND*planes)
 
         self.conv1 = conv1(inplanes, inner_planes)
@@ -67,6 +69,9 @@ class BasicBlock(nn.Module):
         self.gn3 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
         self.relu3 = nn.ReLU(inplace=True)
         
+        self.conv3 = conv3(planes, planes)
+        self.gn4 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
+
         self.downsample = downsample
         self.drop = VariationalHidDropout2d(dropout)
 
@@ -102,8 +107,8 @@ class BasicBlock(nn.Module):
 
         if self.downsample is not None:
             residual = self.downsample(x)
-        out += residual + self.temb_proj(F.relu(temb))[:, :, None, None]
-        out = self.gn3(self.relu3(out))
+        out += residual + self.temb_proj(nonlinearity(temb))[:, :, None, None]
+        out = self.gn4(self.relu3(self.conv3(self.gn3(out))))
         return out
     
        
@@ -313,32 +318,32 @@ class MDEQModule(nn.Module):
             x_fuse.append(self.post_fuse_layers[i](y))
         return x_fuse
 
-class Stage0Block(nn.Module):
-    def __init__(self, in_channels, out_channels=None, conv_shortcut=False,
-                 dropout=0.1, temb_channels=512):
-        super(Stage0Block, self).__init__()
-        self.in_channels = in_channels
-        out_channels = in_channels if out_channels is None else out_channels
-        self.out_channels = out_channels
-        self.use_conv_shortcut = conv_shortcut
+# class Stage0Block(nn.Module):
+#     def __init__(self, in_channels, out_channels=None, conv_shortcut=False,
+#                  dropout=0.1, temb_channels=512):
+#         super(Stage0Block, self).__init__()
+#         self.in_channels = in_channels
+#         out_channels = in_channels if out_channels is None else out_channels
+#         self.out_channels = out_channels
+#         self.use_conv_shortcut = conv_shortcut
 
-        self.stage0_0 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-                                                nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
-                                                nn.ReLU(inplace=True))
+#         self.stage0_0 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+#                                                 nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
+#                                                 nn.ReLU(inplace=True))
 
-        self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
+#         self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
 
-        self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
-                                    nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
-                                    nn.ReLU(inplace=True),
-                                    nn.Dropout(dropout))
+#         self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
+#                                     nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
+#                                     nn.ReLU(inplace=True),
+#                                     nn.Dropout(dropout))
 
-    def forward(self, x, temb):
-        h = x
-        h = self.stage0_0(x)
-        h = h + self.temb_proj(F.relu(temb))[:, :, None, None]
-        h = self.stage0_1(h)
-        return x+h
+#     def forward(self, x, temb):
+#         h = x
+#         h = self.stage0_0(x)
+#         h = h + self.temb_proj(F.relu(temb))[:, :, None, None]
+#         h = self.stage0_1(h)
+#         return x+h
 
 class MDEQDiffNet(nn.Module):
 
@@ -374,10 +379,10 @@ class MDEQDiffNet(nn.Module):
             # We use the downsample module above as the injection transformation
             self.stage0 = None
         else:
-            # self.stage0 = nn.Sequential(nn.Conv2d(self.init_chansize, self.init_chansize, kernel_size=1, bias=False),
-            #                             nn.BatchNorm2d(self.init_chansize, momentum=BN_MOMENTUM, affine=True),
-            #                             nn.ReLU(inplace=True))
-            self.stage0 = Stage0Block(self.init_chansize, out_channels=self.init_chansize, dropout=0.1, temb_channels=512)
+            self.stage0 = nn.Sequential(nn.Conv2d(self.init_chansize, self.init_chansize, kernel_size=1, bias=False),
+                                        nn.BatchNorm2d(self.init_chansize, momentum=BN_MOMENTUM, affine=True),
+                                        nn.ReLU(inplace=True))
+            #self.stage0 = Stage0Block(self.init_chansize, out_channels=self.init_chansize, dropout=0.1, temb_channels=512)
         
         # PART II: MDEQ's f_\theta layer
         self.fullstage = self._make_stage(self.fullstage_cfg, self.num_channels, dropout=self.dropout)
@@ -445,7 +450,7 @@ class MDEQDiffNet(nn.Module):
         
         assert self.stage0 is not None, "Temporal embeddings are not being used"
         # Inject only to the highest resolution...
-        x_list = [self.stage0(x, temb) if self.stage0 else x]
+        x_list = [self.stage0(x) if self.stage0 else x]
         for i in range(1, num_branches):
             bsz, _, H, W = x_list[-1].shape
             x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros

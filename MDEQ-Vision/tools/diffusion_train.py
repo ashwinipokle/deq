@@ -10,6 +10,7 @@ from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
+from models import ema
 
 import torch
 import torch.nn as nn
@@ -35,6 +36,7 @@ from utils.utils import get_optimizer
 from utils.utils import save_checkpoint
 from utils.utils import create_logger
 from termcolor import colored
+from models.ema import EMAHelper
 
 from core.diffusion_function import get_beta_schedule
 
@@ -104,6 +106,15 @@ def main():
     if config.TRAIN.MODEL_FILE:
         model.load_state_dict(torch.load(config.TRAIN.MODEL_FILE))
         logger.info(colored('=> loading model from {}'.format(config.TRAIN.MODEL_FILE), 'red'))
+
+    # Currently not adding EMA
+    # TODO: Add EMA if needed 
+
+    if config.DIFFUSION_MODEL.EMA:
+        ema_helper = EMAHelper(mu=config.DIFFUSION_MODEL.EMA_RATE)
+        ema_helper.register(model)
+    else:
+        ema_helper = None
 
     # copy model file
     this_dir = os.path.dirname(__file__)
@@ -175,6 +186,7 @@ def main():
             
             writer_dict['train_global_steps'] = checkpoint['train_global_steps']
             #writer_dict['valid_global_steps'] = [checkpoint'valid_global_steps']
+            ema_helper.load_state_dict(checkpoint["ema_state_dict"])
 
             if 'lr_scheduler' in checkpoint:
                 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_iters, 
@@ -196,9 +208,6 @@ def main():
                 optimizer, config.TRAIN.LR_STEP, config.TRAIN.LR_FACTOR,
                 last_epoch-1)
     
-    # Currently not adding EMA
-    # TODO: Add EMA if needed 
-
     # Get alpha and beta params
     betas = get_beta_schedule(
         beta_schedule=config.DIFFUSION.BETA_SCHEDULE,
@@ -227,7 +236,8 @@ def main():
                         optimizer=optimizer, 
                         lr_scheduler=lr_scheduler,
                         writer_dict=writer_dict,
-                        step=step)
+                        step=step,
+                        ema_helper=ema_helper)
               
         torch.cuda.empty_cache()
         if writer_dict['writer'] is not None:
@@ -244,6 +254,7 @@ def main():
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'train_global_steps': writer_dict['train_global_steps'],
+                'ema_state_dict': ema_helper.state_dict() if ema_helper is not None else {}
             }, is_best=False, output_dir=final_output_dir, filename=f'checkpoint_{step}.pth.tar')
 
     final_model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')

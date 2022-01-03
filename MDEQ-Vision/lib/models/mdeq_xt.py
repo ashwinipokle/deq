@@ -53,10 +53,28 @@ def get_timestep_embedding(timesteps, embedding_dim):
         emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
     return emb
 
-class Bottleneck(nn.Module):
-    expansion = 4
+class Upsample(nn.Module):
+    def __init__(self, in_channels, with_conv=True):
+        super().__init__()
+        self.with_conv = with_conv
+        if self.with_conv:
+            self.conv = torch.nn.Conv2d(in_channels,
+                                        in_channels,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1)
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def forward(self, x):
+        x = torch.nn.functional.interpolate(
+            x, scale_factor=2.0, mode="nearest")
+        if self.with_conv:
+            x = self.conv(x)
+        return x
+
+class Bottleneck(nn.Module):
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None, temb_channels=512):
         """
         A bottleneck block with receptive field only 3x3. (This is not used in MDEQ; only
         in the classifier layer).
@@ -64,24 +82,39 @@ class Bottleneck(nn.Module):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM, affine=False)
+        
         self.conv2 = conv3x3(planes, planes, stride=stride)
         self.bn2 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM, affine=False)
+        
         self.conv3 = nn.Conv2d(planes, planes*self.expansion, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes*self.expansion, momentum=BN_MOMENTUM, affine=False)
         self.relu = nn.ReLU(inplace=True)
+        
         self.downsample = downsample
         self.stride = stride
+        
+        self.temb_proj = nn.Linear(temb_channels, planes)
 
-    def forward(self, x, injection=None):
-        if injection is None:
-            injection = 0
+
+    def forward(self, input, injection=None):
+        # import pdb; pdb.set_trace()
+        # if injection is None:
+        #     injection = 0
+        x = input[0]
+        temb = input[1]
+        # print(x.shape)
+        # print(temb.shape)
         residual = x
 
-        out = self.conv1(x) + injection
+        if injection is not None:
+            out = self.conv1(x) + injection
+        else:
+            out = self.conv1(x) 
+
         out = self.bn1(out)
         out = self.relu(out)
 
-        out = self.conv2(out)
+        out = self.conv2(out) + self.temb_proj(nonlinearity(temb))[:, :, None, None]
         out = self.bn2(out)
         out = self.relu(out)
 
@@ -119,101 +152,99 @@ class MDEQDiffusionNet(MDEQDiffNet):
         ])
 
         # Classification Head
-        # self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(self.num_channels)
+        self.incre_modules, self.up_modules = self._make_head(self.num_channels)
 
-        # Last layer
-        # self.last_layer = nn.Conv2d(self.final_chansize, self.out_chansize, kernel_size=3, 
+        # Linear layer to predict noise in input image
+        # self.noise_pred_layer = nn.Conv2d(self.num_channels[0]//2, self.out_chansize, kernel_size=3, 
         #                                           stride=1, padding=1)
         
-        last_inp_channels = np.int(np.sum(self.num_channels))
-        self.last_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels//2, kernel_size=1),
+        last_inp_channels = np.int(self.num_channels[0]//2)
+        self.noise_pred_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels//2, kernel_size=1),
                                         nn.BatchNorm2d(last_inp_channels//2, momentum=BN_MOMENTUM),
                                         nn.ReLU(inplace=True),
                                         nn.Conv2d(last_inp_channels//2, self.out_chansize, kernel_size=3, 
                                                   stride=1, padding=1))
 
 
-    # def _make_head(self, pre_stage_channels):
-    #     """
-    #     Create a final prediction head that:
-    #        - Increase the number of features in each resolution 
-    #        - Downsample higher-resolution equilibria to the lowest-resolution and concatenate
-    #        - Pass through a final FC layer for classification
-    #     """
-    #     head_block = Bottleneck
-    #     d_model = self.init_chansize
-    #     head_channels = self.head_channels
+    def _make_head(self, pre_stage_channels):
+        """
+        Create a final prediction head that:
+           - Increase the number of features in each resolution 
+           - Downsample higher-resolution equilibria to the lowest-resolution and concatenate
+           - Pass through a final FC layer for classification
+        """
+        head_block = Bottleneck
+        d_model = self.init_chansize
+        head_channels = self.head_channels
         
-    #     # Increasing the number of channels on each resolution when doing classification. 
-    #     incre_modules = []
-    #     for i, channels  in enumerate(pre_stage_channels):
-    #         incre_module = self._make_layer(head_block, channels, head_channels[i], blocks=1, stride=1)
-    #         incre_modules.append(incre_module)
-    #     incre_modules = nn.ModuleList(incre_modules)
-            
-        # Downsample the high-resolution streams to perform classification
-    #     downsamp_modules = []
-    #     for i in range(len(pre_stage_channels)-1):
-    #         in_channels = head_channels[i] * head_block.expansion
-    #         out_channels = head_channels[i+1] * head_block.expansion
-    #         downsamp_module = nn.Sequential(conv3x3(in_channels, out_channels, stride=2, bias=True),
-    #                                         nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM),
-    #                                         nn.ReLU(inplace=True))
-    #         downsamp_modules.append(downsamp_module)
-    #     downsamp_modules = nn.ModuleList(downsamp_modules)
+        # import pdb; pdb.set_trace()
+        # Incremental modules each resolution
+        incre_modules = []
+        for i, channels in enumerate(pre_stage_channels):
+            if i == len(pre_stage_channels)-1:
+                incre_module = self._make_layer(head_block, channels, channels//2, blocks=1, stride=1)
+            else:
+                incre_module = self._make_layer(head_block, 2*channels, channels//2, blocks=1, stride=1)
+            incre_modules.append(incre_module)
+        incre_modules = nn.ModuleList(incre_modules)
+        #incre_modules = nn.Sequential(*incre_modules)
 
-    #     # Final FC layers
-    #     final_layer = nn.Sequential(nn.Conv2d(head_channels[len(pre_stage_channels)-1] * head_block.expansion,
-    #                                           self.final_chansize, kernel_size=1),
-    #                                 nn.BatchNorm2d(self.final_chansize, momentum=BN_MOMENTUM),
-    #                                 nn.ReLU(inplace=True))
-    #     return incre_modules, downsamp_modules, final_layer
+        # Upsample layers
+        up_modules = []
+        for i, channels  in enumerate(pre_stage_channels):
+            upsample_module = Upsample(channels//2)
+            up_modules.append(upsample_module)
+        up_modules = nn.ModuleList(up_modules)
+        #up_modules = nn.Sequential(*up_modules)
+        return incre_modules, up_modules
 
-    # def _make_layer(self, block, inplanes, planes, blocks, stride=1, padding=0):
-    #     downsample = None
-    #     if stride != 1 or inplanes != planes * block.expansion:
-    #         downsample = nn.Sequential(nn.Conv2d(inplanes, planes*block.expansion, kernel_size=1, stride=stride, bias=False, padding=padding),
-    #                                    nn.BatchNorm2d(planes * block.expansion, momentum=BN_MOMENTUM))
+    def _make_layer(self, block, inplanes, planes, blocks, stride=1, padding=0):
+        downsample = None
+        if stride != 1 or inplanes != planes * block.expansion:
+            downsample = nn.Sequential(nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride, bias=False, padding=padding),
+                                       nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
 
-    #     layers = []
-    #     layers.append(block(inplanes, planes, stride, downsample))
-    #     inplanes = planes * block.expansion
-    #     for i in range(1, blocks):
-    #         layers.append(block(inplanes, planes))
+        layers = []
+        layers.append(block(inplanes, planes, stride, downsample))
 
-    #     return nn.Sequential(*layers)
+        inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(block(inplanes, planes))
+        
+        return nn.Sequential(*layers)
 
+
+    def predict_noise(self, y_list, temb):
+        """
+        Combine all resolutions and output noise
+        """
+        #import pdb; pdb.set_trace()
+        # start with the lowest resolution and upsample
+        for i in range(self.num_branches-1, 0, -1):
+            if i == self.num_branches-1:
+                y = self.incre_modules[i]((y_list[i], temb))
+            else: 
+                y = self.incre_modules[i]((torch.cat((y_list[i], y), dim=1), temb))
+            y = self.up_modules[i](y)
+        # import pdb; pdb.set_trace()
+        y = self.incre_modules[0]((torch.cat((y_list[0], y), dim=1), temb))
+        # y = self.final_layer(y)
+        y = self.noise_pred_layer(y)
+        return y
 
     # def predict_noise(self, y_list):
     #     """
     #     Combine all resolutions and output noise
     #     """
-    #     import pdb; pdb.set_trace()
-    #     y = self.incre_modules[0](y_list[0])
-    #     for i in range(len(self.downsamp_modules)):
-    #         y = self.incre_modules[i+1](y_list[i+1]) + self.downsamp_modules[i](y)
-    #     y = torch.nn.functional.interpolate(
-    #         y, scale_factor=2.0, mode="nearest")
-    #     y = self.final_layer(y)
+    #     y0_h, y0_w = y_list[0].size(2), y_list[0].size(3)
+    #     all_res = [y_list[0]]
+    #     for i in range(1, self.num_branches):
+    #         all_res.append(F.interpolate(y_list[i], size=(y0_h, y0_w), mode='bilinear', align_corners=True))
+
+    #     y = torch.cat(all_res, dim=1)
+    #     all_res = None
     #     y = self.last_layer(y)
     #     return y
-
-    def predict_noise(self, y_list):
-        """
-        Combine all resolutions and output noise
-        """
-        y0_h, y0_w = y_list[0].size(2), y_list[0].size(3)
-        all_res = [y_list[0]]
-        for i in range(1, self.num_branches):
-            all_res.append(F.interpolate(y_list[i], size=(y0_h, y0_w), mode='bilinear', align_corners=True))
-
-        y = torch.cat(all_res, dim=1)
-        all_res = None
-        y = self.last_layer(y)
-
-        # y = self.final_layer(y)
-        # y = self.last_layer(y)
-        return y
 
     def forward(self, x, t, train_step=0, **kwargs):
         # timestep embedding
@@ -223,7 +254,7 @@ class MDEQDiffusionNet(MDEQDiffNet):
         temb = self.temb.dense[1](temb)
 
         output, jac_loss, sradius = self._forward(x, temb, train_step, **kwargs)
-        return self.predict_noise(output), jac_loss, sradius
+        return self.predict_noise(output, temb), jac_loss, sradius
     
     def init_weights(self, pretrained=''):
         """
