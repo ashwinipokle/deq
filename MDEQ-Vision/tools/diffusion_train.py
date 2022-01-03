@@ -173,7 +173,7 @@ def main():
     last_epoch = config.TRAIN.BEGIN_EPOCH
 
     if config.TRAIN.RESUME:
-        model_state_file = os.path.join(final_output_dir, 'checkpoint_5474.pth.tar')
+        model_state_file = os.path.join(final_output_dir, 'final_checkpoint.pth.tar')
         if os.path.isfile(model_state_file):
             checkpoint = torch.load(model_state_file)
             last_epoch = checkpoint['epoch']
