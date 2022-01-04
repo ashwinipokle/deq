@@ -1,13 +1,13 @@
-GPUS: (0,) #1,2,3)
+GPUS: (0,1,2,3)
 LOG_DIR: 'log/'
 DATA_DIR: ''
-OUTPUT_DIR: 'output-deq-temb/'
+OUTPUT_DIR: 'output-wt-temb-/'
 WORKERS: 4
 PRINT_FREQ: 100
 
 MODEL: 
   NAME: mdeq_xt
-  NUM_LAYERS: 10
+  NUM_LAYERS: 20
   NUM_CLASSES: 10
   NUM_GROUPS: 8
   DROPOUT: 0.3
@@ -21,7 +21,7 @@ MODEL:
   EXTRA:
     FULL_STAGE:
       NUM_MODULES: 1
-      NUM_BRANCHES: 4
+      NUM_BRANCHES: 1
       BLOCK: BASIC
       BIG_KERNELS:
       - 0
@@ -73,7 +73,7 @@ TRAIN:
   END_EPOCH: 3500
   RESUME: true
   LR_SCHEDULER: 'cosine'
-  PRETRAIN_STEPS: 6000
+  PRETRAIN_STEPS: 6000000
   LR_FACTOR: 0.1
   LR_STEP:
   - 30
@@ -86,5 +86,6 @@ TRAIN:
   NESTEROV: true
   SHUFFLE: true
   CHECKPOINT_FREQ: 40
+  CLIP: 1.0
 DEBUG:
   DEBUG: false
