@@ -8,3 +8,4 @@ import models.mdeq_core
 #Diffusion models
 import models.mdeq_xt
 import models.mdeq_core_xt
+import models.ema

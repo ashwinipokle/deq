@@ -191,3 +191,89 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
     #print(writer_dict['train_global_steps'], global_steps, cur_iters, step)
     return step
 
+
+def simple_train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, num_iters,
+         trainloader, optimizer, lr_scheduler, model, writer_dict, step, ema_helper=None):
+    
+    # Training
+    model.train()
+    batch_time = AverageMeter()
+    ave_loss = AverageMeter()
+    ave_jac_loss = AverageMeter()
+    tic = time.time()
+    cur_iters = epoch*epoch_iters
+    writer = writer_dict['writer']
+    global_steps = writer_dict['train_global_steps']
+    #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters}")
+    #assert global_steps == cur_iters, f"Step counter problem... fix this? {global_steps} {cur_iters}"
+    update_freq = config.LOSS.JAC_INCREMENTAL
+
+    # Distributed information
+    rank = get_rank()
+    world_size = get_world_size()
+
+    for i_iter, batch in enumerate(trainloader):
+        #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters}")
+        #import pdb; pdb.set_trace()
+        x, labels = batch
+        step += 1
+        n = x.size(0)
+        x = x.cuda()
+        x = data_transform(config, x)
+        e = torch.randn_like(x)
+
+        t = torch.randint(
+            low=0, high=num_timesteps, size=(n // 2 + 1,)
+        ).cuda()
+        t = torch.cat([t, num_timesteps - t - 1], dim=0)[:n]
+
+        a = (1-betas).cumprod(dim=0).index_select(0, t).view(-1, 1, 1, 1)
+        x = x * a.sqrt() + e * (1.0 - a).sqrt()
+        
+        output = model(x, t.float())
+        
+        losses = (e - output).square().sum(dim=(1, 2, 3))
+        loss = losses.mean()
+
+        # compute gradient and do update step
+        optimizer.zero_grad()
+        loss.backward()
+        
+        if config.TRAIN.CLIP > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP)
+        optimizer.step()
+
+        if config.TRAIN.LR_SCHEDULER == 'cosine':
+            lr_scheduler.step()
+            lr = optimizer.param_groups[0]['lr']
+        else:
+            # If LR scheduler is None
+            lr = adjust_learning_rate(optimizer, base_lr, num_iters, i_iter+cur_iters)
+        
+        # TODO: Update EMA if needed
+        if config.DIFFUSION_MODEL.EMA:
+            ema_helper.update(model)
+            
+        # update average loss
+        ave_loss.update(loss.item(), x.size(0))
+
+        # measure elapsed time (modeling + data + sync)
+        batch_time.update(time.time() - tic)
+        tic = time.time()
+
+        if i_iter % config.PRINT_FREQ == 0 and rank == 0:
+            print_loss = ave_loss.average() / world_size
+            print_jac_loss = ave_jac_loss.average() / world_size
+            msg = 'Epoch: [{}/{}] Iter:[{}/{}], Time: {:.2f}, ' \
+                  'lr: {:.6f}, Loss: {:.6f}, Jac: {:.4f} ({:.4f})' .format(
+                      epoch, num_epoch, i_iter, epoch_iters, 
+                      batch_time.average(), lr, print_loss, print_jac_loss, factor)
+            logging.info(msg)
+
+        global_steps += 1
+        writer_dict['train_global_steps'] = global_steps
+        #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters} cur_iter {i_iter}")
+
+    #print(writer_dict['train_global_steps'], global_steps, cur_iters, step)
+    return step
+
