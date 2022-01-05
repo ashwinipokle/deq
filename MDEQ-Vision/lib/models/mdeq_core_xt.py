@@ -448,9 +448,10 @@ class MDEQDiffNet(nn.Module):
         x = self.downsample(x)
         rank = get_rank()
         
-        assert self.stage0 is not None, "Temporal embeddings are not being used"
+        #assert self.stage0 is not None, "Temporal embeddings are not being used"
         # Inject only to the highest resolution...
         x_list = [self.stage0(x) if self.stage0 else x]
+        bsz, _, H, W = x_list[-1].shape
         for i in range(1, num_branches):
             bsz, _, H, W = x_list[-1].shape
             x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros

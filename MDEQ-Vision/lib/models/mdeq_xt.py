@@ -152,13 +152,15 @@ class MDEQDiffusionNet(MDEQDiffNet):
         ])
 
         # Classification Head
-        self.incre_modules, self.up_modules = self._make_head(self.num_channels)
+        # self.incre_modules, self.up_modules = self._make_head(self.num_channels)
 
         # Linear layer to predict noise in input image
-        # self.noise_pred_layer = nn.Conv2d(self.num_channels[0]//2, self.out_chansize, kernel_size=3, 
-        #                                           stride=1, padding=1)
-        
-        last_inp_channels = np.int(self.num_channels[0]//2)
+        #last_inp_channels = np.int(self.num_channels[0]//2)
+        #print("input channels ", last_inp_channels)
+        #self.noise_pred_layer = nn.Conv2d(last_inp_channels, self.out_chansize, kernel_size=3, 
+        #                                          stride=1, padding=1)
+        last_inp_channels = np.int(sum(self.num_channels))
+        print("Input channels", last_inp_channels)
         self.noise_pred_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels//2, kernel_size=1),
                                         nn.BatchNorm2d(last_inp_channels//2, momentum=BN_MOMENTUM),
                                         nn.ReLU(inplace=True),
@@ -214,37 +216,37 @@ class MDEQDiffusionNet(MDEQDiffNet):
         return nn.Sequential(*layers)
 
 
+    # def predict_noise(self, y_list, temb):
+    #     """
+    #     Combine all resolutions and output noise
+    #     """
+    #     #import pdb; pdb.set_trace()
+    #     # start with the lowest resolution and upsample
+    #     for i in range(self.num_branches-1, 0, -1):
+    #         if i == self.num_branches-1:
+    #             y = self.incre_modules[i]((y_list[i], temb))
+    #         else: 
+    #             y = self.incre_modules[i]((torch.cat((y_list[i], y), dim=1), temb))
+    #         y = self.up_modules[i](y)
+    #     # import pdb; pdb.set_trace()
+    #     y = self.incre_modules[0]((torch.cat((y_list[0], y), dim=1), temb))
+    #     # y = self.final_layer(y)
+    #     y = self.noise_pred_layer(y)
+    #     return y
+
     def predict_noise(self, y_list, temb):
         """
         Combine all resolutions and output noise
         """
-        #import pdb; pdb.set_trace()
-        # start with the lowest resolution and upsample
-        for i in range(self.num_branches-1, 0, -1):
-            if i == self.num_branches-1:
-                y = self.incre_modules[i]((y_list[i], temb))
-            else: 
-                y = self.incre_modules[i]((torch.cat((y_list[i], y), dim=1), temb))
-            y = self.up_modules[i](y)
-        # import pdb; pdb.set_trace()
-        y = self.incre_modules[0]((torch.cat((y_list[0], y), dim=1), temb))
-        # y = self.final_layer(y)
+        y0_h, y0_w = y_list[0].size(2), y_list[0].size(3)
+        all_res = [y_list[0]]
+        for i in range(1, self.num_branches):
+            all_res.append(F.interpolate(y_list[i], size=(y0_h, y0_w), mode='bilinear', align_corners=True))
+
+        y = torch.cat(all_res, dim=1)
+        all_res = None
         y = self.noise_pred_layer(y)
         return y
-
-    # def predict_noise(self, y_list):
-    #     """
-    #     Combine all resolutions and output noise
-    #     """
-    #     y0_h, y0_w = y_list[0].size(2), y_list[0].size(3)
-    #     all_res = [y_list[0]]
-    #     for i in range(1, self.num_branches):
-    #         all_res.append(F.interpolate(y_list[i], size=(y0_h, y0_w), mode='bilinear', align_corners=True))
-
-    #     y = torch.cat(all_res, dim=1)
-    #     all_res = None
-    #     y = self.last_layer(y)
-    #     return y
 
     def forward(self, x, t, train_step=0, **kwargs):
         # timestep embedding
