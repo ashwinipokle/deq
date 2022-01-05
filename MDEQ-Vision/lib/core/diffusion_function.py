@@ -199,14 +199,13 @@ def simple_train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, ba
     model.train()
     batch_time = AverageMeter()
     ave_loss = AverageMeter()
-    ave_jac_loss = AverageMeter()
+
     tic = time.time()
     cur_iters = epoch*epoch_iters
     writer = writer_dict['writer']
     global_steps = writer_dict['train_global_steps']
     #print(f"Global steps {global_steps} Cur Iters {cur_iters} epoch {epoch} Epoch Iters {epoch_iters}")
     #assert global_steps == cur_iters, f"Step counter problem... fix this? {global_steps} {cur_iters}"
-    update_freq = config.LOSS.JAC_INCREMENTAL
 
     # Distributed information
     rank = get_rank()
@@ -263,11 +262,10 @@ def simple_train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, ba
 
         if i_iter % config.PRINT_FREQ == 0 and rank == 0:
             print_loss = ave_loss.average() / world_size
-            print_jac_loss = ave_jac_loss.average() / world_size
             msg = 'Epoch: [{}/{}] Iter:[{}/{}], Time: {:.2f}, ' \
-                  'lr: {:.6f}, Loss: {:.6f}, Jac: {:.4f} ({:.4f})' .format(
+                  'lr: {:.6f}, Loss: {:.6f}' .format(
                       epoch, num_epoch, i_iter, epoch_iters, 
-                      batch_time.average(), lr, print_loss, print_jac_loss, factor)
+                      batch_time.average(), lr, print_loss)
             logging.info(msg)
 
         global_steps += 1

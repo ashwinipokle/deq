@@ -10,7 +10,6 @@ from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
-from models import ema
 
 import torch
 import torch.nn as nn
