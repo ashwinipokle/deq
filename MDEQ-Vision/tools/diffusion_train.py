@@ -137,6 +137,9 @@ def main():
             transforms.ToTensor(),
         ])
         train_dataset = datasets.CIFAR10(root=f'{config.DATASET.ROOT}', train=True, download=True, transform=transform_train)
+        
+        total_len = len(train_dataset)
+        train_dataset = torch.utils.data.Subset(train_dataset, np.random.choice(total_len, size=1000, replace=False))
         valid_dataset = datasets.CIFAR10(root=f'{config.DATASET.ROOT}', train=False, download=True, transform=transform_valid)
     else:
         assert dataset_name == "cifar10", "Only CIFAR-10 is supported at this phase"
