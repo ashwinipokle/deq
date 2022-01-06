@@ -20,7 +20,7 @@ import torch._utils
 import torch.nn.functional as F
 
 sys.path.append("lib/models")
-from mdeq_core_xt import MDEQDiffNet, SwishActivation, nonlinearity
+from mdeq_core_swish import MDEQDiffNet, SwishActivation, nonlinearity
 
 sys.path.append("../")
 from lib.layer_utils import conv3x3
