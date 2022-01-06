@@ -10,3 +10,5 @@ import models.mdeq_xt
 import models.mdeq_core_xt
 import models.ema
 import models.unet 
+import models.mdeq_swish
+import models.mdeq_core_swish
