@@ -171,7 +171,7 @@ def main():
     model = nn.DataParallel(model, device_ids=gpus).cuda()
     print("Finished constructing model!")
 
-    model_state_file = os.path.join(final_output_dir, 'checkpoint_63011.pth.tar')
+    model_state_file = os.path.join(final_output_dir, 'checkpoint_156861.pth.tar')
     #model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
     if os.path.isfile(model_state_file):
         checkpoint = torch.load(model_state_file)
@@ -269,10 +269,10 @@ def sample_image(x, model, args, config, last=True):
             raise NotImplementedError
 
         logger=None
-        use_wandb = False
+        use_wandb = True
         if use_wandb:
             wandb.init( project="DDIM-9-15", 
-                        name=f"DDIM-mdeq-temb-{len(seq)}",
+                        name=f"DDIM-mdeq-temb-ema-upsample-{len(seq)}",
                         reinit=True,
                         config=config)
             logger = wandb.log

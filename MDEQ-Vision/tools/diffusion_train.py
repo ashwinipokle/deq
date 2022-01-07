@@ -10,7 +10,6 @@ from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
-from models import ema
 
 import torch
 import torch.nn as nn
@@ -173,7 +172,7 @@ def main():
     last_epoch = config.TRAIN.BEGIN_EPOCH
 
     if config.TRAIN.RESUME:
-        model_state_file = os.path.join(final_output_dir, 'checkpoint_5474.pth.tar')
+        model_state_file = os.path.join(final_output_dir, 'checkpoint_156861.pth.tar')
         if os.path.isfile(model_state_file):
             checkpoint = torch.load(model_state_file)
             last_epoch = checkpoint['epoch']
@@ -186,7 +185,8 @@ def main():
             
             writer_dict['train_global_steps'] = checkpoint['train_global_steps']
             #writer_dict['valid_global_steps'] = [checkpoint'valid_global_steps']
-            ema_helper.load_state_dict(checkpoint["ema_state_dict"])
+            if config.DIFFUSION_MODEL.EMA and "ema_state_dict" in checkpoint:
+                ema_helper.load_state_dict(checkpoint["ema_state_dict"])
 
             if 'lr_scheduler' in checkpoint:
                 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_iters, 

@@ -1,7 +1,7 @@
-GPUS: (0,) #1,2,3)
+GPUS: (0,1,2,3)
 LOG_DIR: 'log/'
 DATA_DIR: ''
-OUTPUT_DIR: 'output-deq-temb/'
+OUTPUT_DIR: 'output-deq-temb-upsample/'
 WORKERS: 4
 PRINT_FREQ: 100
 
@@ -29,10 +29,10 @@ MODEL:
       - 0
       - 0
       HEAD_CHANNELS:
-      - 14
-      - 28
-      - 56
-      - 112
+      - 64
+      - 128
+      - 256
+      - 256
       FINAL_CHANSIZE: 1680
       NUM_BLOCKS:
       - 1
@@ -65,13 +65,13 @@ DATASET:
   TEST_SET: 'val'
   TRAIN_SET: 'train'
 TEST:
-  BATCH_SIZE_PER_GPU: 96
+  BATCH_SIZE_PER_GPU: 64
   MODEL_FILE: ''
 TRAIN:
-  BATCH_SIZE_PER_GPU: 96
+  BATCH_SIZE_PER_GPU: 64
   BEGIN_EPOCH: 0
   END_EPOCH: 3500
-  RESUME: true
+  RESUME: True
   LR_SCHEDULER: 'cosine'
   PRETRAIN_STEPS: 6000
   LR_FACTOR: 0.1
@@ -86,5 +86,7 @@ TRAIN:
   NESTEROV: true
   SHUFFLE: true
   CHECKPOINT_FREQ: 40
+DIFFUSION_MODEL:
+  EMA: false
 DEBUG:
   DEBUG: false
