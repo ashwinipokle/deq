@@ -40,6 +40,7 @@ from utils.utils import get_optimizer
 from utils.utils import save_checkpoint
 from utils.utils import create_logger
 from termcolor import colored
+from models.ema import EMAHelper
 
 from core.diffusion_function import get_beta_schedule
 
@@ -175,12 +176,16 @@ def main():
     if os.path.isfile(model_state_file):
         checkpoint = torch.load(model_state_file)
         model.module.load_state_dict(checkpoint['state_dict'])
+        # EMA
+        if config.DIFFUSION_MODEL.EMA:
+            ema_helper = EMAHelper(mu=config.DIFFUSION_MODEL.EMA_RATE)
+            ema_helper.register(model)
+            ema_helper.load_state_dict(checkpoint['ema_state_dict'])
+            ema_helper.ema(model)
         #model.module.load_state_dict(checkpoint)
         logger.info("=> loaded checkpoint {}".format(model_state_file))
     else:
         raise ValueError("Checkpoint not loaded!")
-    # Currently not adding EMA
-    # TODO: Add EMA if needed 
     sample(model, args, config)
 
 
