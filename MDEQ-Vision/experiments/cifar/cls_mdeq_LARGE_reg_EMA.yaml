@@ -1,7 +1,7 @@
 GPUS: (0,1,2,3)
 LOG_DIR: 'log/'
 DATA_DIR: ''
-OUTPUT_DIR: 'output-deq-diff-jac-up/' #attn/'
+OUTPUT_DIR: 'output-deq-diff-jac-upsample-ema/'
 WORKERS: 4
 PRINT_FREQ: 100
 
@@ -69,10 +69,10 @@ DATASET:
   TEST_SET: 'val'
   TRAIN_SET: 'train'
 TEST:
-  BATCH_SIZE_PER_GPU: 96
+  BATCH_SIZE_PER_GPU: 64
   MODEL_FILE: ''
 TRAIN:
-  BATCH_SIZE_PER_GPU: 96
+  BATCH_SIZE_PER_GPU: 32
   BEGIN_EPOCH: 0
   END_EPOCH: 3500
   RESUME: true
@@ -84,13 +84,14 @@ TRAIN:
   - 60
   - 90
   OPTIMIZER: adam
-  LR: 0.001
+  LR: 0.0005
   WD: 0.0
   MOMENTUM: 0.98
   NESTEROV: true
   SHUFFLE: true
   CHECKPOINT_FREQ: 40
-DIFFUSION_MODEL:
-  EMA: False
+  CLIP: 1.0
 DEBUG:
   DEBUG: false
+DIFFUSION_MODEL:
+  EMA: true
