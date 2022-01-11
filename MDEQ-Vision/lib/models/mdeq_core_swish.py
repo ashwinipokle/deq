@@ -62,6 +62,9 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         conv1 = conv5x5 if n_big_kernels >= 1 else conv3x3
         conv2 = conv5x5 if n_big_kernels >= 2 else conv3x3
+        conv3 = conv5x5 if n_big_kernels >= 2 else conv3x3
+        conv4 = conv5x5 if n_big_kernels >= 2 else conv3x3
+
         inner_planes = int(DEQ_EXPAND*planes)
 
         self.conv1 = conv1(inplanes, inner_planes)
@@ -70,10 +73,10 @@ class BasicBlock(nn.Module):
         self.conv2 = conv2(inner_planes, planes)
         self.gn2 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
 
-        self.conv3 = conv2(planes, planes)
+        self.conv3 = conv3(planes, planes)
         self.gn3 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
 
-        self.conv4 = conv2(planes, planes)
+        self.conv4 = conv4(planes, planes)
         self.gn4 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
 
         self.gn5 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
@@ -81,7 +84,7 @@ class BasicBlock(nn.Module):
         self.downsample = downsample
         self.drop = VariationalHidDropout2d(dropout)
 
-        self.temb_proj = torch.nn.Linear(temb_channels, planes)
+        self.temb_proj = nn.Linear(temb_channels, planes)
 
         if wnorm: self._wnorm()
     
@@ -91,7 +94,10 @@ class BasicBlock(nn.Module):
         """
         self.conv1, self.conv1_fn = weight_norm(self.conv1, names=['weight'], dim=0)
         self.conv2, self.conv2_fn = weight_norm(self.conv2, names=['weight'], dim=0)
-    
+        self.conv3, self.conv3_fn = weight_norm(self.conv3, names=['weight'], dim=0)
+        self.conv4, self.conv4_fn = weight_norm(self.conv4, names=['weight'], dim=0)
+        self.temb_proj, self.temb_proj_fn = weight_norm(self.temb_proj, names=['weight'], dim=0)
+
     def _reset(self, bsz, d, H, W):
         """
         Reset dropout mask and recompute weight via weight normalization
@@ -100,6 +106,13 @@ class BasicBlock(nn.Module):
             self.conv1_fn.reset(self.conv1)
         if 'conv2_fn' in self.__dict__:
             self.conv2_fn.reset(self.conv2)
+        if 'conv3_fn' in self.__dict__:
+            self.conv3_fn.reset(self.conv3)
+        if 'conv4_fn' in self.__dict__:
+            self.conv4_fn.reset(self.conv4)
+        if 'temb_proj_fn' in self.__dict__:
+            self.temb_proj_fn.reset(self.temb_proj)
+
         self.drop.reset_mask(bsz, d, H, W)
             
     def forward(self, x, temb, injection=None):
@@ -179,6 +192,28 @@ class AttnBlock(nn.Module):
 
         return x+h_
 
+    def _wnorm(self):
+        """
+        Register weight normalization
+        """
+        self.q, self.q_fn = weight_norm(self.q, names=['weight'], dim=0)
+        self.k, self.k_fn = weight_norm(self.k, names=['weight'], dim=0)
+        self.v, self.v_fn = weight_norm(self.v, names=['weight'], dim=0)
+        self.proj_out, self.proj_out_fn = weight_norm(self.proj_out, names=['weight'], dim=0)
+
+    def _reset(self):
+        """
+        Reset dropout mask and recompute weight via weight normalization
+        """
+        if 'q_fn' in self.__dict__:
+            self.q_fn.reset(self.q)
+        if 'k_fn' in self.__dict__:
+            self.k_fn.reset(self.k)
+        if 'v_fn' in self.__dict__:
+            self.v_fn.reset(self.v)
+        if 'proj_out_fn' in self.__dict__:
+            self.proj_out_fn.reset(self.proj_out)
+
 class BasicAttentionBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None, n_big_kernels=0, 
                         dropout=0.0, 
@@ -190,12 +225,30 @@ class BasicAttentionBlock(nn.Module):
                         dropout=dropout, 
                         wnorm=wnorm, 
                         temb_channels=temb_channels)
-        self.attn = AttnBlock(inchannels=planes)
+        
+        self.attn = AttnBlock(in_channels=planes)
+
+        if wnorm: self._wnorm()
     
-    def forward(self, x):
-        out = self.basic(x)
+    def forward(self, x, temb, injection=None):
+        out = self.basic(x, temb=temb, injection=injection)
         out = self.attn(out)
         return out
+    
+    def _wnorm(self):
+        """
+        Register weight normalization
+        """
+        self.basic._wnorm()
+        self.attn._wnorm()
+
+    def _reset(self, bsz, d, H, W):
+        """
+        Reset dropout mask and recompute weight via weight normalization
+        """
+        self.basic._reset(bsz, d, H, W)
+        self.attn._reset()
+
 
 blocks_dict = { 'BASIC': BasicBlock, 'ATTN': BasicAttentionBlock}
 
@@ -250,7 +303,6 @@ class UpsampleModule(nn.Module):
         inp_chan = num_channels[in_res]
         out_chan = num_channels[out_res]
         self.level_diff = level_diff = in_res - out_res
-        
         self.net = nn.Sequential(OrderedDict([
                         ('conv', nn.Conv2d(inp_chan, out_chan, kernel_size=1, bias=False)),
                         ('gnorm', nn.GroupNorm(NUM_GROUPS, out_chan, affine=FUSE_GN_AFFINE)),
@@ -561,6 +613,7 @@ class MDEQDiffNet(nn.Module):
             with torch.no_grad():
                 result = self.f_solver(func, z1, threshold=f_thres, stop_mode=self.stop_mode, name="forward")
                 z1 = result['result']
+                print("Nstep ", result['nstep'], "rel_trace", result['rel_trace'], "abs_trace", result['abs_trace'])
             new_z1 = z1
 
             if (not self.training) and spectral_radius_mode:
