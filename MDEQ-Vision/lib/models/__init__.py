@@ -11,4 +11,5 @@ import models.mdeq_core_xt
 import models.mdeq_swish
 import models.mdeq_core_swish
 import models.unet
+import models.mdeq_swish_alt
 import models.mdeq_core_swish_alt

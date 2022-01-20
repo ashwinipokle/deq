@@ -262,6 +262,7 @@ class BranchNet(nn.Module):
     
     def forward(self, x, temb, injection=None):
         blocks = self.blocks
+        #import pdb; pdb.set_trace()
         y = blocks[0](x, temb, injection)
         for i in range(1, len(blocks)):
             y = blocks[i](y, temb)
@@ -522,6 +523,7 @@ class MDEQDiffNet(nn.Module):
 
         self.iodrop = VariationalHidDropout2d(0.0)
         self.hook = None
+        self.layer_loss = cfg['LOSS']['USE_LAYER_LOSS']
         self.hook_zm = None
         
     def parse_cfg(self, cfg):
@@ -568,8 +570,7 @@ class MDEQDiffNet(nn.Module):
         return MDEQModule(num_branches, block_type, num_blocks, num_channels, big_kernels, dropout=dropout)
 
     # Inputs are x and temporal embedding
-    def _forward(self, x, temb, train_step=-1, compute_jac_loss=True, spectral_radius_mode=False, 
-                    layer_loss=True,
+    def _forward(self, x, temb, train_step=-1, compute_jac_loss=True, spectral_radius_mode=False,
                     writer=None, **kwargs):
         """
         The core MDEQ module. In the starting phase, we can (optionally) enter a shallow stacked f_\theta training mode
@@ -600,7 +601,6 @@ class MDEQDiffNet(nn.Module):
         sradius = torch.zeros(bsz, 1).to(x)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
         
-        #import pdb; pdb.set_trace()
         # Multiscale Deep Equilibrium!
         if not deq_mode:
             for layer_ind in range(self.num_layers): 
@@ -615,15 +615,16 @@ class MDEQDiffNet(nn.Module):
         else:
             with torch.no_grad():
                 result = self.f_solver(func, z1, threshold=f_thres, stop_mode=self.stop_mode,
-                                         layer_loss=layer_loss, layer_idx= [15],
+                                         layer_loss=self.layer_loss, layer_idx= [10],
                                          name="forward")
                 z1 = result['result']
-                if layer_loss:
+                if self.layer_loss:
                     zm = result['zm'][0]
-                if self.train_step % 5000 == 0:
+                if train_step % 50 == 0:
                     print("Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
             new_z1 = z1
-            if layer_loss:
+
+            if self.layer_loss:
                 new_zm = zm
 
             if (not self.training) and spectral_radius_mode:
@@ -633,6 +634,8 @@ class MDEQDiffNet(nn.Module):
 
             if self.training:
                 new_z1 = func(z1.requires_grad_())
+                new_zm = func(zm.requires_grad_())
+
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1, z1)
                     
@@ -644,23 +647,28 @@ class MDEQDiffNet(nn.Module):
                     result = self.b_solver(lambda y: autograd.grad(new_z1, z1, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
                                           threshold=b_thres, stop_mode=self.stop_mode, name="backward")
                     return result['result']
-
+                
                 self.hook = new_z1.register_hook(backward_hook)
 
-                def backward_hook_zm(grad):
-                    if self.hook_zm is not None:
-                        self.hook_zm.remove()
-                        torch.cuda.synchronize()
+                # def backward_hook_zm(grad):
+                #     if self.hook_zm is not None:
+                #         self.hook_zm.remove()
+                #         torch.cuda.synchronize()
                         
-                    result = self.b_solver(lambda y: autograd.grad(new_zm, zm, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
-                                          threshold=b_thres, stop_mode=self.stop_mode, name="backward")
-                    return result['result']
+                #     result = self.b_solver(lambda y: autograd.grad(new_zm, zm, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
+                #                           threshold=b_thres, stop_mode=self.stop_mode, name="backward")
+                #     return result['result']
                 
-                self.hook_zm  = new_zm.register_hook(backward_hook_zm)
+                # if self.layer_loss:
+                #     self.hook_zm  = new_zm.register_hook(backward_hook_zm)
 
         y_list = self.iodrop(vec2list(new_z1, cutoffs))
-        y_list_zm = self.iodrop(vec2list(new_zm, cutoffs))
-        return y_list, jac_loss.view(1,-1), sradius.view(-1,1), y_list_zm
+
+        if deq_mode and self.layer_loss:
+            y_list_zm = self.iodrop(vec2list(new_zm, cutoffs))
+            return y_list, jac_loss.view(1,-1), sradius.view(-1,1), y_list_zm
+            
+        return y_list, jac_loss.view(1,-1), sradius.view(-1,1), None
     
     def forward(self, x, train_step=-1, **kwargs):
         raise NotImplemented    # To be inherited & implemented by MDEQClsNet and MDEQSegNet (see mdeq.py)

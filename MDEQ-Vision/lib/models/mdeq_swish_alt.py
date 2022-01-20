@@ -249,7 +249,7 @@ class MDEQDiffusionNet(MDEQDiffNet):
         """
         Combine all resolutions and output noise
         """
-        y = self.last_layer(y_list[0])
+        y = self.noise_pred_layer(y_list[0])
         return y
 
     # def predict_noise(self, y_list):
@@ -274,10 +274,12 @@ class MDEQDiffusionNet(MDEQDiffNet):
         temb = nonlinearity(temb)
         temb = self.temb.dense[1](temb)
 
-        output, jac_loss, sradius, output_zm = self._forward(x, temb, train_step, **kwargs)
-        noise = self.predict_noise(output, temb)
-        noise_zm = self.predict_noise(output_zm, temb)
-        return noise, jac_loss, sradius, noise_zm
+        output, jac_loss, sradius, output_zm = self._forward(x, temb, train_step,**kwargs)
+        noise = self.predict_noise(output)
+        if output_zm is not None:
+            noise_zm = self.predict_noise(output_zm)
+            return noise, jac_loss, sradius, [noise_zm]
+        return noise, jac_loss, sradius, []
     
     def init_weights(self, pretrained=''):
         """

@@ -136,8 +136,9 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
 
         a = (1-betas).cumprod(dim=0).index_select(0, t).view(-1, 1, 1, 1)
         xt = x * a.sqrt() + e * (1.0 - a).sqrt()
-        
-        if config.USE_LAYER_LOSS:
+
+        output_zm = None
+        if config.LOSS.USE_LAYER_LOSS:
             output, jac_loss, _, output_zm = model(xt, t.float(), train_step=global_steps, 
                                 compute_jac_loss=compute_jac_loss,
                                 f_thres=f_thres, b_thres=b_thres, writer=writer)
@@ -147,7 +148,7 @@ def train(config, betas, num_timesteps, epoch, num_epoch, epoch_iters, base_lr, 
                                        f_thres=f_thres, b_thres=b_thres, writer=writer)
         
         losses = (e - output).square().sum(dim=(1, 2, 3))
-        if config.USE_LAYER_LOSS:
+        if config.LOSS.USE_LAYER_LOSS and len(output_zm) > 0:
             for layer_output in output_zm:
                 losses += config.LOSS.GAMMA * (layer_output - output).square().sum(dim=(1, 2, 3))
             
