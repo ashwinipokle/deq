@@ -613,7 +613,8 @@ class MDEQDiffNet(nn.Module):
             with torch.no_grad():
                 result = self.f_solver(func, z1, threshold=f_thres, stop_mode=self.stop_mode, name="forward")
                 z1 = result['result']
-                print("Nstep ", result['nstep'], "rel_trace", result['rel_trace'], "abs_trace", result['abs_trace'])
+                if train_step % 5000 == 0:
+                    print("Train step", train_step, "Nstep ", result['nstep'], "rel_trace", result['rel_trace'], "abs_trace", result['abs_trace'])
             new_z1 = z1
 
             if (not self.training) and spectral_radius_mode:

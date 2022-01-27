@@ -168,10 +168,12 @@ def main():
     }
 
     gpus = list(config.GPUS)
+    print("# Trainable parameters : ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+
     model = nn.DataParallel(model, device_ids=gpus).cuda()
     print("Finished constructing model!")
 
-    model_state_file = os.path.join(final_output_dir, 'checkpoint_156861.pth.tar')
+    model_state_file = os.path.join(final_output_dir, 'checkpoint_234991.pth.tar')
     #model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
     if os.path.isfile(model_state_file):
         checkpoint = torch.load(model_state_file)

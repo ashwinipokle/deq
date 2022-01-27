@@ -265,6 +265,7 @@ class BranchNet(nn.Module):
     
     def forward(self, x, temb, injection=None):
         blocks = self.blocks
+        #import pdb; pdb.set_trace()
         y = blocks[0](x, temb, injection)
         for i in range(1, len(blocks)):
             y = blocks[i](y, temb)
