@@ -22,7 +22,11 @@ MODEL:
     FULL_STAGE:
       NUM_MODULES: 1
       NUM_BRANCHES: 4
-      BLOCK: BASIC
+      BLOCK: #BASIC
+      - BASIC
+      - ATTN
+      - BASIC
+      - BASIC
       BIG_KERNELS:
       - 0
       - 0
