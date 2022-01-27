@@ -14,7 +14,6 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch._utils
 import torch.nn.functional as F
 import torch.autograd as autograd
@@ -52,7 +51,7 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, n_big_kernels=0, 
-                        dropout=0.1, 
+                        dropout=0.0, 
                         wnorm=False, 
                         temb_channels=512):
         """
@@ -82,9 +81,7 @@ class BasicBlock(nn.Module):
         self.gn5 = nn.GroupNorm(NUM_GROUPS, planes, affine=BLOCK_GN_AFFINE)
 
         self.downsample = downsample
-        
         self.drop1 = VariationalHidDropout2d(dropout)
-        self.drop2 = VariationalHidDropout2d(dropout)
 
         self.temb_proj = nn.Linear(temb_channels, inner_planes)
 
@@ -116,18 +113,17 @@ class BasicBlock(nn.Module):
             self.temb_proj_fn.reset(self.temb_proj)
 
         self.drop1.reset_mask(bsz, d, H, W)
-        self.drop2.reset_mask(bsz, d*DEQ_EXPAND, H, W)
             
     def forward(self, x, temb, injection=None):
         if injection is None: injection = 0
         residual = x
+
         out = nonlinearity(self.gn1(self.conv1(x)))
         out = self.drop1(self.conv2(out)) + injection
         out = self.gn2(out)
 
         out = self.conv3(out) + self.temb_proj(nonlinearity(temb))[:, :, None, None]
         out = nonlinearity(self.gn3(out))
-        out = self.drop2(out)
         out = self.conv4(out)
         
         if self.downsample is not None:
@@ -359,7 +355,12 @@ class MDEQModule(nn.Module):
                 num_branches, len(big_kernels))
             logger.error(error_msg)
             raise ValueError(error_msg)
-    
+        # display error message if blocks is a list
+        if type(blocks) == list and len(blocks) != num_branches:
+            error_msg = 'NUM_BRANCHES({}) <> BLOCKS({})'.format(
+                num_branches, len(blocks))
+            logger.error(error_msg)
+            raise ValueError(error_msg)
     def _wnorm(self):
         """
         Apply weight normalization to the learnable parameters of MDEQ
@@ -401,7 +402,10 @@ class MDEQModule(nn.Module):
         Make the residual block (s; default=1 block) of MDEQ's f_\theta layer. Specifically,
         it returns `branch_layers[i]` gives the module that operates on input from resolution i.
         """
-        branch_layers = [self._make_one_branch(i, block, num_blocks, num_channels, big_kernels, dropout=dropout) for i in range(num_branches)]
+        if type(block) == list:
+            branch_layers = [self._make_one_branch(i, block_type, num_blocks, num_channels, big_kernels, dropout=dropout) for i, block_type in zip(range(num_branches), block)]
+        else:
+            branch_layers = [self._make_one_branch(i, block, num_blocks, num_channels, big_kernels, dropout=dropout) for i in range(num_branches)]
         return nn.ModuleList(branch_layers)
 
     def _make_fuse_layers(self):
@@ -457,21 +461,32 @@ class MDEQModule(nn.Module):
         return x_fuse
 
 class Stage0Block(nn.Module):
-    def __init__(self, in_channels, out_channels=None):
+    def __init__(self, in_channels, out_channels=None, conv_shortcut=False,
+                 dropout=0.1, temb_channels=512):
         super(Stage0Block, self).__init__()
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
+        self.use_conv_shortcut = conv_shortcut
 
         self.stage0_0 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
                                                 nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=out_channels, eps=1e-6, affine=True),
                                                 #nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True)
                                                 )
 
+        # self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
+
+        # self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
+        #                             nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
+        #                             nn.ReLU(inplace=True),
+        #                             nn.Dropout(dropout))
+
     def forward(self, x):
         h = x
         h = nonlinearity(self.stage0_0(x))
-        return h
+        # h = h + self.temb_proj(nonlinearity(temb))[:, :, None, None]
+        # h = self.stage0_1(h)
+        return h #x+h
 
 class MDEQDiffNet(nn.Module):
 
@@ -487,54 +502,30 @@ class MDEQDiffNet(nn.Module):
         BN_MOMENTUM = kwargs.get('BN_MOMENTUM', 0.1)
         self.parse_cfg(cfg)
         init_chansize = self.init_chansize
+
+        self.downsample = nn.Sequential(
+            conv3x3(3, init_chansize, stride=(2 if self.downsample_times >= 1 else 1)),
+            nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True),
+            #nn.BatchNorm2d(init_chansize, momentum=BN_MOMENTUM, affine=True),
+            SwishActivation(),
+            conv3x3(init_chansize, init_chansize, stride=(2 if self.downsample_times >= 2 else 1)),
+            nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True),
+            #nn.BatchNorm2d(init_chansize, momentum=BN_MOMENTUM, affine=True),
+            SwishActivation())
+
+        if self.downsample_times > 2:
+            for i in range(3, self.downsample_times+1):
+                self.downsample.add_module(f"DS{i}", conv3x3(init_chansize, init_chansize, stride=2))
+                self.downsample.add_module(f"DS{i}-GN", nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True))
+                #self.downsample.add_module(f"DS{i}-BN", nn.BatchNorm2d(init_chansize, momentum=BN_MOMENTUM, affine=True))
+                self.downsample.add_module(f"DS{i}-ACTIVATION", SwishActivation())
         
-        if self.inject_highest:
-            self.downsample = nn.Sequential(
-                conv3x3(3, init_chansize, stride=(2 if self.downsample_times >= 1 else 1)),
-                nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True),
-                SwishActivation(),
-                conv3x3(init_chansize, init_chansize, stride=(2 if self.downsample_times >= 2 else 1)),
-                nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True),
-                SwishActivation())
-
-            if self.downsample_times > 2:
-                for i in range(3, self.downsample_times+1):
-                    self.downsample.add_module(f"DS{i}", conv3x3(init_chansize, init_chansize, stride=2))
-                    self.downsample.add_module(f"DS{i}-GN", nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True))
-                    self.downsample.add_module(f"DS{i}-ACTIVATION", SwishActivation())
-        else:
-            downsample_times = [i for i in range(self.num_branches)]
-            downsample_modules = []
-            for i in range(self.num_branches):
-                downsample_module = nn.Sequential(
-                    conv3x3(3, init_chansize, stride=(2 if downsample_times[i] >= 1 else 1)),
-                    nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True),
-                    SwishActivation(),
-                    conv3x3(init_chansize, init_chansize, stride=(2 if downsample_times[i] >= 2 else 1)),
-                    nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True),
-                    SwishActivation())
-
-                if downsample_times[i] > 2:
-                    for i in range(3, downsample_times[i]+1):
-                        downsample_module.add_module(f"DS{i}", conv3x3(init_chansize, init_chansize, stride=2))
-                        downsample_module.add_module(f"DS{i}-GN", nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=init_chansize, eps=1e-6, affine=True))
-                        downsample_module.add_module(f"DS{i}-ACTIVATION", SwishActivation())
-                
-                downsample_modules.append(downsample_module)
-            self.downsample =  nn.ModuleList(downsample_modules)
-
         # PART I: Input injection module
         if self.downsample_times == 0 and self.num_branches <= 2:
             # We use the downsample module above as the injection transformation
             self.stage0 = None
         else:
-            if self.inject_highest:
-                self.stage0 = Stage0Block(self.init_chansize, out_channels=self.init_chansize)
-            else:
-                stages = []
-                for i in range(self.num_branches):
-                    stages.append(Stage0Block(self.init_chansize, out_channels=self.num_channels[i]))
-                self.stage0 =  nn.ModuleList(stages)
+            self.stage0 = Stage0Block(self.init_chansize, out_channels=self.init_chansize, dropout=0.1, temb_channels=512)
         
         # PART II: MDEQ's f_\theta layer
         self.fullstage = self._make_stage(self.fullstage_cfg, self.num_channels, dropout=self.dropout)
@@ -562,7 +553,6 @@ class MDEQDiffNet(nn.Module):
         self.downsample_times = cfg['MODEL']['DOWNSAMPLE_TIMES']
         self.fullstage_cfg = cfg['MODEL']['EXTRA']['FULL_STAGE']   
         self.pretrain_steps = cfg['TRAIN']['PRETRAIN_STEPS']
-        self.inject_highest = cfg['MODEL']['INJECT_HIGHEST']
 
         # DEQ related
         self.f_solver = eval(cfg['DEQ']['F_SOLVER'])
@@ -587,7 +577,10 @@ class MDEQDiffNet(nn.Module):
         num_modules = layer_config['NUM_MODULES']
         num_branches = layer_config['NUM_BRANCHES']
         num_blocks = layer_config['NUM_BLOCKS']
-        block_type = blocks_dict[layer_config['BLOCK']]
+        if type(layer_config['BLOCK']) == list:
+            block_type = [blocks_dict[block_key] for block_key in layer_config['BLOCK']]
+        else:
+            block_type = blocks_dict[layer_config['BLOCK']]
         big_kernels = layer_config['BIG_KERNELS']
         return MDEQModule(num_branches, block_type, num_blocks, num_channels, big_kernels, dropout=dropout)
 
@@ -598,28 +591,19 @@ class MDEQDiffNet(nn.Module):
         The core MDEQ module. In the starting phase, we can (optionally) enter a shallow stacked f_\theta training mode
         to warm up the weights (specified by the self.pretrain_steps; see below)
         """
-        if train_step == -1: 
-            print("Train step is -1!!!")
-
         num_branches = self.num_branches
         f_thres = kwargs.get('f_thres', self.f_thres)
         b_thres = kwargs.get('b_thres', self.b_thres)
+        x = self.downsample(x)
         rank = get_rank()
         
-        if self.inject_highest:
-            x = self.downsample(x)
-            # Inject only to the highest resolution...
-            x_list = [self.stage0(x) if self.stage0 else x]
-            for i in range(1, num_branches):
-                bsz, _, H, W = x_list[-1].shape
-                x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros
-        else:
-            x_list = [self.stage0[0](self.downsample[0](x))]
-            for idx in range(1, num_branches):
-                bsz, _, H, W = x_list[-1].shape
-                x_downsampled = self.downsample[idx](x)
-                x_list.append(self.stage0[idx](x_downsampled))   # ... and the rest are all zeros
-
+        # assert self.stage0 is not None, "Temporal embeddings are not being used"
+        # Inject only to the highest resolution...
+        x_list = [self.stage0(x) if self.stage0 else x]
+        for i in range(1, num_branches):
+            bsz, _, H, W = x_list[-1].shape
+            x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros
+            
         z_list = [torch.zeros_like(elem) for elem in x_list]
         z1 = list2vec(z_list)
         cutoffs = [(elem.size(1), elem.size(2), elem.size(3)) for elem in z_list]
@@ -634,7 +618,7 @@ class MDEQDiffNet(nn.Module):
         
         # Multiscale Deep Equilibrium!
         if not deq_mode:
-            for layer_ind in range(self.num_layers):
+            for layer_ind in range(self.num_layers): 
                 z1 = func(z1)
             new_z1 = z1
 
@@ -646,19 +630,17 @@ class MDEQDiffNet(nn.Module):
         else:
             with torch.no_grad():
                 result = self.f_solver(func, z1, threshold=f_thres, stop_mode=self.stop_mode,
-                                         layer_loss=self.layer_loss, layer_idx=[10, 15],
+                                         layer_loss=self.layer_loss, layer_idx= [10],
                                          name="forward")
                 z1 = result['result']
                 if self.layer_loss:
-                    # This should be a list
-                    zm_list = result['zm']
+                    zm = result['zm'][0]
                 if train_step % 50 == 0:
                     print("Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
             new_z1 = z1
-            new_zm = []
 
             if self.layer_loss:
-                new_zm = [zm for zm in zm_list]
+                new_zm = zm
 
             if (not self.training) and spectral_radius_mode:
                 with torch.enable_grad():
@@ -667,9 +649,7 @@ class MDEQDiffNet(nn.Module):
 
             if self.training:
                 new_z1 = func(z1.requires_grad_())
-                new_zm = []
-                for zm in zm_list:
-                    new_zm.append(func(zm.requires_grad_()))
+                new_zm = func(zm.requires_grad_())
 
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1, z1)
@@ -685,16 +665,25 @@ class MDEQDiffNet(nn.Module):
                 
                 self.hook = new_z1.register_hook(backward_hook)
 
+                # def backward_hook_zm(grad):
+                #     if self.hook_zm is not None:
+                #         self.hook_zm.remove()
+                #         torch.cuda.synchronize()
+                        
+                #     result = self.b_solver(lambda y: autograd.grad(new_zm, zm, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
+                #                           threshold=b_thres, stop_mode=self.stop_mode, name="backward")
+                #     return result['result']
+                
+                # if self.layer_loss:
+                #     self.hook_zm  = new_zm.register_hook(backward_hook_zm)
+
         y_list = self.iodrop(vec2list(new_z1, cutoffs))
 
         if deq_mode and self.layer_loss:
-            y_list_zm = []
-            for zm_ in new_zm:
-                y_list_zm.append(self.iodrop(vec2list(zm_, cutoffs)))
-
+            y_list_zm = self.iodrop(vec2list(new_zm, cutoffs))
             return y_list, jac_loss.view(1,-1), sradius.view(-1,1), y_list_zm
 
-        return y_list, jac_loss.view(1,-1), sradius.view(-1,1), []
+        return y_list, jac_loss.view(1,-1), sradius.view(-1,1), None
     
     def forward(self, x, train_step=-1, **kwargs):
         raise NotImplemented    # To be inherited & implemented by MDEQClsNet and MDEQSegNet (see mdeq.py)

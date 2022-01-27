@@ -165,9 +165,7 @@ def main():
     lr_scheduler = None
 
     epoch_iters = np.int(train_dataset.__len__() / config.TRAIN.BATCH_SIZE_PER_GPU / len(gpus))
-    end_epoch = config.TRAIN.END_EPOCH + config.TRAIN.EXTRA_EPOCH
     num_iters = config.TRAIN.END_EPOCH * epoch_iters
-    extra_iters = config.TRAIN.EXTRA_EPOCH * epoch_iters
     step = 0
     last_epoch = config.TRAIN.BEGIN_EPOCH
 
@@ -184,7 +182,6 @@ def main():
             optimizer.load_state_dict(checkpoint['optimizer'])
             
             writer_dict['train_global_steps'] = checkpoint['train_global_steps']
-            #writer_dict['valid_global_steps'] = [checkpoint'valid_global_steps']
             if config.DIFFUSION_MODEL.EMA and "ema_state_dict" in checkpoint:
                 ema_helper.load_state_dict(checkpoint["ema_state_dict"])
 

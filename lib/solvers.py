@@ -119,7 +119,7 @@ def matvec(part_Us, part_VTs, x):
     return -x + torch.einsum('bijd, bd -> bij', part_Us, VTx)     # (N, 2d, L'), but should really be (N, (2d*L'), 1)
 
 
-def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, name="unknown"):
+def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, layer_loss=True, layer_idx=[10], name="unknown"):
     bsz, total_hsize, seq_len = x0.size()
     g = lambda y: f(y) - y
     dev = x0.device
@@ -148,6 +148,7 @@ def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, name="unknown
                         'rel': 0}
     nstep, lowest_xest, lowest_gx = 0, x_est, gx
 
+    zm = []
     while nstep < threshold:
         x_est, gx, delta_x, delta_gx, ite = line_search(update, x_est, gx, g, nstep=nstep, on=ls)
         nstep += 1
@@ -164,6 +165,8 @@ def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, name="unknown
                     lowest_xest, lowest_gx = x_est.clone().detach(), gx.clone().detach()
                 lowest_dict[mode] = diff_dict[mode]
                 lowest_step_dict[mode] = nstep
+        if nstep in layer_idx:
+            zm.append(lowest_xest)
 
         new_objective = diff_dict[stop_mode]
         if new_objective < eps: break
@@ -183,6 +186,10 @@ def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, name="unknown
         Us[:,:,:,nstep-1] = u
         update = -matvec(Us[:,:,:,:nstep], VTs[:,:nstep], gx)
 
+    if nstep < layer_idx[-1]:
+        while len(zm) < len(layer_idx):
+            zm.append(lowest_xest)
+
     # Fill everything up to the threshold length
     for _ in range(threshold+1-len(trace_dict[stop_mode])):
         trace_dict[stop_mode].append(lowest_dict[stop_mode])
@@ -195,7 +202,8 @@ def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, name="unknown
             "abs_trace": trace_dict['abs'],
             "rel_trace": trace_dict['rel'],
             "eps": eps,
-            "threshold": threshold}
+            "threshold": threshold,
+            "zm": zm}
 
 
 def anderson(f, x0, m=6, lam=1e-4, threshold=50, eps=1e-3, stop_mode='rel', beta=1.0, **kwargs):

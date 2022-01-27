@@ -20,7 +20,7 @@ import torch._utils
 import torch.nn.functional as F
 
 sys.path.append("lib/models")
-from mdeq_core_swish_alt import MDEQDiffNet, nonlinearity, SwishActivation
+from mdeq_core_relu_alt import MDEQDiffNet
 
 sys.path.append("../")
 from lib.layer_utils import conv3x3
@@ -32,6 +32,10 @@ POST_GN_AFFINE = True     # Don't change the value here. The value is controlled
 DEQ_EXPAND = 5        # Don't change the value here. The value is controlled by the yaml files.
 NUM_GROUPS = 4        # Don't change the value here. The value is controlled by the yaml files.
 logger = logging.getLogger(__name__)
+
+def nonlinearity(x):
+    # swish
+    return x*torch.sigmoid(x)
 
 def get_timestep_embedding(timesteps, embedding_dim):
     """
@@ -93,11 +97,12 @@ class Bottleneck(nn.Module):
 
         self.gn4 = nn.GroupNorm(NUM_GROUPS, planes*self.expansion, affine=POST_GN_AFFINE)
         #self.bn3 = nn.BatchNorm2d(planes*self.expansion, momentum=BN_MOMENTUM, affine=False)
-        #self.relu = nn.ReLU(inplace=True)
         
-        self.drop1 = nn.Dropout2d(p=0.1)
-        self.drop2 = nn.Dropout2d(p=0.1)
-
+        self.relu1 = nn.ReLU(inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.relu3 = nn.ReLU(inplace=True)
+        self.relu4 = nn.ReLU(inplace=True)
+        
         self.downsample = downsample
         self.stride = stride
         
@@ -119,21 +124,20 @@ class Bottleneck(nn.Module):
             out = self.conv1(x) 
 
         out = self.gn1(out)
-        out = nonlinearity(out)
-        out = self.drop1(out)
+        out = self.relu1(out)
 
         out = self.conv2(out) + self.temb_proj(nonlinearity(temb))[:, :, None, None]
         out = self.gn2(out)
-        out = nonlinearity(out)
-        out = self.drop2(out)
+        out = self.relu3(out)
 
         out = self.conv3(out)
+        out = self.gn3(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
 
         out += residual
-        out = self.gn4(nonlinearity(self.gn3(out)))
+        out = self.relu4(self.gn4(out))
         return out
 
 # Replace all batch norm with group norm?
@@ -162,7 +166,7 @@ class MDEQDiffusionNet(MDEQDiffNet):
         # Classification Head
         self.incre_modules, self.up_modules = self._make_head(self.num_channels)
 
-        ## Linear layer to predict noise in input image
+        # Linear layer to predict noise in input image
         # self.noise_pred_layer = nn.Conv2d(self.num_channels[0], self.out_chansize, kernel_size=3, 
         #                                           stride=1, padding=1)
         
@@ -170,9 +174,10 @@ class MDEQDiffusionNet(MDEQDiffNet):
         self.noise_pred_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels//2, kernel_size=1),
                                         nn.GroupNorm(NUM_GROUPS, last_inp_channels//2, affine=POST_GN_AFFINE),
                                         #nn.BatchNorm2d(last_inp_channels//2, momentum=BN_MOMENTUM),
-                                        SwishActivation(),
+                                        nn.ReLU(inplace=True),
                                         nn.Conv2d(last_inp_channels//2, self.out_chansize, kernel_size=3, 
                                                   stride=1, padding=1))
+
 
     def _make_head(self, pre_stage_channels):
         """
@@ -275,13 +280,12 @@ class MDEQDiffusionNet(MDEQDiffNet):
         temb = nonlinearity(temb)
         temb = self.temb.dense[1](temb)
 
-        output, jac_loss, sradius, output_zm_list = self._forward(x, temb, train_step,**kwargs)
+        output, jac_loss, sradius, output_zm = self._forward(x, temb, train_step,**kwargs)
         noise = self.predict_noise(output, temb)
-        noise_zm = []
-        for output_zm in output_zm_list:
-            pred_zm = self.predict_noise(output_zm, temb)
-            noise_zm.append(pred_zm)
-        return noise, jac_loss, sradius, noise_zm
+        if output_zm is not None:
+            noise_zm = self.predict_noise(output_zm, temb)
+            return noise, jac_loss, sradius, [noise_zm]
+        return noise, jac_loss, sradius, []
     
     def init_weights(self, pretrained=''):
         """
@@ -310,12 +314,12 @@ class MDEQDiffusionNet(MDEQDiffNet):
             for k in pretrained_dict.keys():
                 if k not in model_dict.keys():
                     diff_modules.add(k.split(".")[0])
-            print(colored(f"In ImageNet MDEQ but not Cityscapes MDEQ: {sorted(list(diff_modules))}", "red"))
+            print(colored(f"Some discrepancies were detected: {sorted(list(diff_modules))}", "red"))
             diff_modules = set()
             for k in model_dict.keys():
                 if k not in pretrained_dict.keys():
                     diff_modules.add(k.split(".")[0])
-            print(colored(f"In Cityscapes MDEQ but not ImageNet MDEQ: {sorted(list(diff_modules))}", "green"))
+            print(colored(f"Some discrepancies were detected: {sorted(list(diff_modules))}", "green"))
             
             pretrained_dict = {k: v for k, v in pretrained_dict.items()
                                if k in model_dict.keys()}

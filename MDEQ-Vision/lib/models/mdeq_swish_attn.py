@@ -11,6 +11,7 @@ import functools
 from termcolor import colored
 
 from collections import OrderedDict
+from models.mdeq_core_swish_alt import USE_RELU
 
 import numpy as np
 
@@ -20,7 +21,7 @@ import torch._utils
 import torch.nn.functional as F
 
 sys.path.append("lib/models")
-from mdeq_core_swish_alt import MDEQDiffNet, nonlinearity, SwishActivation
+from mdeq_core_swish_attn import MDEQDiffNet, nonlinearity, SwishActivation, AttnBlock
 
 sys.path.append("../")
 from lib.layer_utils import conv3x3
@@ -31,6 +32,7 @@ FUSE_GN_AFFINE = True     # Don't change the value here. The value is controlled
 POST_GN_AFFINE = True     # Don't change the value here. The value is controlled by the yaml files.
 DEQ_EXPAND = 5        # Don't change the value here. The value is controlled by the yaml files.
 NUM_GROUPS = 4        # Don't change the value here. The value is controlled by the yaml files.
+
 logger = logging.getLogger(__name__)
 
 def get_timestep_embedding(timesteps, embedding_dim):
@@ -95,9 +97,6 @@ class Bottleneck(nn.Module):
         #self.bn3 = nn.BatchNorm2d(planes*self.expansion, momentum=BN_MOMENTUM, affine=False)
         #self.relu = nn.ReLU(inplace=True)
         
-        self.drop1 = nn.Dropout2d(p=0.1)
-        self.drop2 = nn.Dropout2d(p=0.1)
-
         self.downsample = downsample
         self.stride = stride
         
@@ -110,7 +109,8 @@ class Bottleneck(nn.Module):
         #     injection = 0
         x = input[0]
         temb = input[1]
-
+        # print(x.shape)
+        # print(temb.shape)
         residual = x
 
         if injection is not None:
@@ -120,20 +120,19 @@ class Bottleneck(nn.Module):
 
         out = self.gn1(out)
         out = nonlinearity(out)
-        out = self.drop1(out)
 
         out = self.conv2(out) + self.temb_proj(nonlinearity(temb))[:, :, None, None]
         out = self.gn2(out)
         out = nonlinearity(out)
-        out = self.drop2(out)
 
         out = self.conv3(out)
+        out = nonlinearity(self.gn3(out))
 
         if self.downsample is not None:
             residual = self.downsample(x)
 
         out += residual
-        out = self.gn4(nonlinearity(self.gn3(out)))
+        out = nonlinearity(self.gn4(out))
         return out
 
 # Replace all batch norm with group norm?
@@ -162,10 +161,11 @@ class MDEQDiffusionNet(MDEQDiffNet):
         # Classification Head
         self.incre_modules, self.up_modules = self._make_head(self.num_channels)
 
-        ## Linear layer to predict noise in input image
+        # Linear layer to predict noise in input image
         # self.noise_pred_layer = nn.Conv2d(self.num_channels[0], self.out_chansize, kernel_size=3, 
         #                                           stride=1, padding=1)
         
+        self.attn = AttnBlock(self.num_channels[-1])
         last_inp_channels = np.int(self.num_channels[0])
         self.noise_pred_layer = nn.Sequential(nn.Conv2d(last_inp_channels, last_inp_channels//2, kernel_size=1),
                                         nn.GroupNorm(NUM_GROUPS, last_inp_channels//2, affine=POST_GN_AFFINE),
@@ -173,6 +173,7 @@ class MDEQDiffusionNet(MDEQDiffNet):
                                         SwishActivation(),
                                         nn.Conv2d(last_inp_channels//2, self.out_chansize, kernel_size=3, 
                                                   stride=1, padding=1))
+
 
     def _make_head(self, pre_stage_channels):
         """
@@ -238,6 +239,10 @@ class MDEQDiffusionNet(MDEQDiffNet):
                 y = self.incre_modules[i]((y_list[i], temb))
             else: 
                 y = self.incre_modules[i]((torch.cat((y_list[i], y), dim=1), temb))
+            
+            if y.shape[-1] in [16]:
+                y = self.attn(y)
+
             if i > 0:
                 y = self.up_modules[i](y)
 
@@ -245,13 +250,12 @@ class MDEQDiffusionNet(MDEQDiffNet):
         y = self.noise_pred_layer(y)
         return y
 
-    # linear prediction head based on only a single prediction layer
-    # def predict_noise(self, y_list):
-    #     """
-    #     Combine all resolutions and output noise
-    #     """
-    #     y = self.noise_pred_layer(y_list[0])
-    #     return y
+    #def predict_noise(self, y_list):
+        # """
+        # Combine all resolutions and output noise
+        # """
+        # y = self.noise_pred_layer(y_list[0])
+        # return y
 
     # def predict_noise(self, y_list):
     #     """
@@ -275,13 +279,12 @@ class MDEQDiffusionNet(MDEQDiffNet):
         temb = nonlinearity(temb)
         temb = self.temb.dense[1](temb)
 
-        output, jac_loss, sradius, output_zm_list = self._forward(x, temb, train_step,**kwargs)
+        output, jac_loss, sradius, output_zm = self._forward(x, temb, train_step,**kwargs)
         noise = self.predict_noise(output, temb)
-        noise_zm = []
-        for output_zm in output_zm_list:
-            pred_zm = self.predict_noise(output_zm, temb)
-            noise_zm.append(pred_zm)
-        return noise, jac_loss, sradius, noise_zm
+        if output_zm is not None:
+            noise_zm = self.predict_noise(output_zm, temb)
+            return noise, jac_loss, sradius, [noise_zm]
+        return noise, jac_loss, sradius, []
     
     def init_weights(self, pretrained=''):
         """

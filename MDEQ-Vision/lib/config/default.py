@@ -51,6 +51,7 @@ _C.MODEL.IMAGE_SIZE = [256, 256]  # width * height, ex: 192 * 256
 _C.MODEL.HEATMAP_SIZE = [64, 64]  # width * height, ex: 24 * 32
 _C.MODEL.SIGMA = 2
 _C.MODEL.EXTRA = CN(new_allowed=True)
+_C.MODEL.INJECT_HIGHEST = True
 
 # Hyperparams related to DIFFUSION UNET
 _C.UNET_MODEL = CN()
@@ -118,7 +119,9 @@ _C.LOSS.TOPK = 8
 _C.LOSS.USE_TARGET_WEIGHT = True
 _C.LOSS.USE_DIFFERENT_JOINTS_WEIGHT = False
 _C.LOSS.USE_LAYER_LOSS = False 
-_C.LOSS.GAMMA = 0.01
+_C.LOSS.GAMMA = [0.01]
+_C.LOSS.USE_IMAGE_LOSS = False
+_C.LOSS.LAMBDA = 0.8
 
 # DATASET related params
 _C.DATASET = CN()
