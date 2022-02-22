@@ -21,6 +21,7 @@ _C.PRINT_FREQ = 20
 _C.AUTO_RESUME = False
 _C.PIN_MEMORY = True
 _C.RANK = 0
+_C.USE_REMOTE_LOGS = False
 
 # Cudnn related params
 _C.CUDNN = CN()
@@ -244,6 +245,9 @@ def update_config(cfg, args):
     if args.percent < 1:
         cfg.PERCENT = args.percent
     
+    if args.use_wandb:
+        cfg.USE_REMOTE_LOGS = args.use_wandb
+
     cfg.merge_from_list(args.opts)
 
     cfg.freeze()

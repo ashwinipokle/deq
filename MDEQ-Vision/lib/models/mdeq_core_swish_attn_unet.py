@@ -281,7 +281,7 @@ class DownsampleModule(nn.Module):
         convs = []
         inp_chan = num_channels[in_res]
         out_chan = num_channels[out_res]
-        self.level_diff = level_diff = out_res - in_res
+        self.level_diff = level_diff = (out_res - in_res)//2
         
         kwargs = {"kernel_size": 3, "stride": 2, "padding": 1, "bias": False}
         for k in range(level_diff):
@@ -306,7 +306,7 @@ class UpsampleModule(nn.Module):
         # upsample (in_res=j, out_res=i)
         inp_chan = num_channels[in_res]
         out_chan = num_channels[out_res]
-        self.level_diff = level_diff = in_res - out_res
+        self.level_diff = level_diff = (in_res - out_res)//2
         self.net = nn.Sequential(OrderedDict([
                         ('conv', nn.Conv2d(inp_chan, out_chan, kernel_size=1, bias=False)),
                         ('gnorm', nn.GroupNorm(NUM_GROUPS, out_chan, affine=FUSE_GN_AFFINE)),
@@ -330,7 +330,7 @@ class MDEQModule(nn.Module):
         self.big_kernels = big_kernels
 
         self.branches = self._make_branches(num_branches, blocks, num_blocks, num_channels, big_kernels, dropout=dropout)
-        self.fuse_layers = self._make_fuse_layers()
+        self.fuse_layers = self._make_unet_fuse_layers()
         self.post_fuse_layers = nn.ModuleList([
             nn.Sequential(OrderedDict([
                 ('activation', SwishActivation()),
@@ -405,9 +405,34 @@ class MDEQModule(nn.Module):
         branch_layers = [self._make_one_branch(i, block, num_blocks, num_channels, big_kernels, dropout=dropout) for i in range(num_branches)]
         return nn.ModuleList(branch_layers)
 
-    def _make_fuse_layers(self):
+    # def _make_fuse_layers(self):
+    #     """
+    #     Create the multiscale fusion layer (which does simultaneous up- and downsamplings).
+    #     """
+    #     if self.num_branches == 1:
+    #         return None
+
+    #     num_branches = self.num_branches
+    #     num_channels = self.num_channels
+    #     fuse_layers = []
+    #     for i in range(num_branches):
+    #         fuse_layer = []                    # The fuse modules into branch #i
+    #         for j in range(num_branches):
+    #             if i == j:
+    #                 fuse_layer.append(None)    # Identity if the same branch
+    #             else:
+    #                 module = UpsampleModule if j > i else DownsampleModule
+    #                 fuse_layer.append(module(num_channels, in_res=j, out_res=i))
+    #         fuse_layers.append(nn.ModuleList(fuse_layer))
+
+    #     # fuse_layers[i][j] gives the (series of) conv3x3s that convert input from branch j to branch i
+    #     return nn.ModuleList(fuse_layers)
+    
+    # These replicate connections in UNet!!!
+    # please work!! I'm tired of tuning these connections and hyperparams
+    def _make_unet_fuse_layers(self):
         """
-        Create the multiscale fusion layer (which does simultaneous up- and downsamplings).
+        Create the multiscale fusion layer - this is for unet style fuse - same resolutions are not connected!!!
         """
         if self.num_branches == 1:
             return None
@@ -418,11 +443,16 @@ class MDEQModule(nn.Module):
         for i in range(num_branches):
             fuse_layer = []                    # The fuse modules into branch #i
             for j in range(num_branches):
-                if i == j:
+                if i == j or j % 2 != i % 2 or i == j+1:
                     fuse_layer.append(None)    # Identity if the same branch
-                else:
-                    module = UpsampleModule if j > i else DownsampleModule
+                elif j < i and j % 2 == 0:
+                    module = DownsampleModule
                     fuse_layer.append(module(num_channels, in_res=j, out_res=i))
+                elif j > i and j % 2 == 1:
+                    module = UpsampleModule
+                    fuse_layer.append(module(num_channels, in_res=j, out_res=i))
+                else:
+                    fuse_layer.append(None)
             fuse_layers.append(nn.ModuleList(fuse_layer))
 
         # fuse_layers[i][j] gives the (series of) conv3x3s that convert input from branch j to branch i
@@ -430,6 +460,32 @@ class MDEQModule(nn.Module):
 
     def get_num_inchannels(self):
         return self.num_channels
+
+    # Here temb is temporal embedding
+    # def forward(self, x, temb, injection, *args):
+    #     """
+    #     The two steps of a multiscale DEQ module (see paper): a per-resolution residual block and 
+    #     a parallel multiscale fusion step.
+    #     """
+    #     if injection is None:
+    #         injection = [0] * len(x)
+    #     if self.num_branches == 1:
+    #         return [self.branches[0](x[0], temb, injection[0])]
+
+    #     # Step 1: Per-resolution residual block
+    #     x_block = []
+    #     for i in range(self.num_branches):
+    #         x_block.append(self.branches[i](x[i], temb, injection[i]))
+        
+    #     # Step 2: Multiscale fusion
+    #     x_fuse = []
+    #     for i in range(self.num_branches):
+    #         y = 0
+    #         # Start fusing all #j -> #i up/down-samplings
+    #         for j in range(self.num_branches):
+    #             y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
+    #         x_fuse.append(self.post_fuse_layers[i](y))
+    #     return x_fuse
 
     # Here temb is temporal embedding
     def forward(self, x, temb, injection, *args):
@@ -447,13 +503,18 @@ class MDEQModule(nn.Module):
         for i in range(self.num_branches):
             x_block.append(self.branches[i](x[i], temb, injection[i]))
         
-        # Step 2: Multiscale fusion
+        # Step 2: Multiscale fusion - unet style
         x_fuse = []
         for i in range(self.num_branches):
             y = 0
             # Start fusing all #j -> #i up/down-samplings
             for j in range(self.num_branches):
-                y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
+                # Connections at same resolution
+                if i == j or (i == j + 1 and j % 2 == 0):
+                    y += x_block[j]
+                elif self.fuse_layers[i][j] is not None:
+                    y += self.fuse_layers[i][j](x_block[j])
+                #y += x_block[j] if i == j else self.fuse_layers[i][j](x_block[j])
             x_fuse.append(self.post_fuse_layers[i](y))
         return x_fuse
 
@@ -606,20 +667,16 @@ class MDEQDiffNet(nn.Module):
         f_thres = kwargs.get('f_thres', self.f_thres)
         b_thres = kwargs.get('b_thres', self.b_thres)
         rank = get_rank()
-        
-        if self.inject_highest:
-            x = self.downsample(x)
-            # Inject only to the highest resolution...
-            x_list = [self.stage0(x) if self.stage0 else x]
-            for i in range(1, num_branches):
-                bsz, _, H, W = x_list[-1].shape
+        # import pdb; pdb.set_trace()
+        x = self.downsample(x)
+        # Inject only to the highest resolution...
+        x_list = [self.stage0(x) if self.stage0 else x]
+        for i in range(1, num_branches):
+            bsz, _, H, W = x_list[-1].shape
+            if i % 2 == 0:
                 x_list.append(torch.zeros(bsz, self.num_channels[i], H//2, W//2).to(x))   # ... and the rest are all zeros
-        else:
-            x_list = [self.stage0[0](self.downsample[0](x))]
-            for idx in range(1, num_branches):
-                bsz, _, H, W = x_list[-1].shape
-                x_downsampled = self.downsample[idx](x)
-                x_list.append(self.stage0[idx](x_downsampled))   # ... and the rest are all zeros
+            else:
+                x_list.append(torch.zeros(bsz, self.num_channels[i], H, W).to(x))
 
         z_list = [torch.zeros_like(elem) for elem in x_list]
         z1 = list2vec(z_list)
@@ -653,8 +710,8 @@ class MDEQDiffNet(nn.Module):
                 if self.layer_loss:
                     # This should be a list
                     zm_list = result['zm']
-                if train_step % 50 == 0:
-                    print("Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
+                if train_step % 100 == 0:
+                    print("[For] Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
             new_z1 = z1
             new_zm = []
             if self.layer_loss:
@@ -668,8 +725,9 @@ class MDEQDiffNet(nn.Module):
             if self.training:
                 new_z1 = func(z1.requires_grad_())
                 new_zm = []
-                for zm in zm_list:
-                    new_zm.append(func(zm.requires_grad_()))
+                if self.layer_loss:
+                    for zm in zm_list:
+                        new_zm.append(func(zm.requires_grad_()))
 
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1, z1)
@@ -681,6 +739,8 @@ class MDEQDiffNet(nn.Module):
                         
                     result = self.b_solver(lambda y: autograd.grad(new_z1, z1, y, retain_graph=True)[0] + grad, torch.zeros_like(grad), 
                                           threshold=b_thres, stop_mode=self.stop_mode, name="backward")
+                    if train_step % 100 == 0:
+                        print("[Back] Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
                     return result['result']
                 
                 self.hook = new_z1.register_hook(backward_hook)

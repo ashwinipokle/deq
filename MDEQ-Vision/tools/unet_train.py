@@ -38,6 +38,9 @@ from termcolor import colored
 
 from models.ema import EMAHelper
 from models.unet import UNetModel
+from models.hrnet import HighResolutionNet
+from models.hrnet_swish import HighResolutionNetV2
+from models.hrnet_res import HighResolutionResNet
 
 from core.diffusion_function import get_beta_schedule
 
@@ -102,14 +105,15 @@ def main():
     torch.backends.cudnn.deterministic = config.CUDNN.DETERMINISTIC
     torch.backends.cudnn.enabled = config.CUDNN.ENABLED
     
-    model = UNetModel(config).cuda()
-    
+    model = eval('models.' + config.MODEL.NAME +
+                 '.get_diffusion_net')(config)
+                 
+    print("Finished constructing model!")
+    print("# Trainable parameters : ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+
     if config.TRAIN.MODEL_FILE:
         model.load_state_dict(torch.load(config.TRAIN.MODEL_FILE))
         logger.info(colored('=> loading model from {}'.format(config.TRAIN.MODEL_FILE), 'red'))
-
-    # Currently not adding EMA
-    # TODO: Add EMA if needed 
 
     if config.DIFFUSION_MODEL.EMA:
         ema_helper = EMAHelper(mu=config.DIFFUSION_MODEL.EMA_RATE)

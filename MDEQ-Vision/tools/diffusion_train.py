@@ -6,7 +6,6 @@ from __future__ import print_function
 
 import argparse
 import os
-from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
@@ -66,6 +65,10 @@ def parse_args():
                         help='percentage of training data to use',
                         type=float,
                         default=1.0)
+    parser.add_argument('--ckpt_name',
+                        help="name of checkpoint to load if resuming training",
+                        type=str,
+                        default='')
     parser.add_argument('opts',
                         help="Modify config options using the command-line",
                         default=None,
@@ -170,7 +173,8 @@ def main():
     last_epoch = config.TRAIN.BEGIN_EPOCH
 
     if config.TRAIN.RESUME:
-        model_state_file = os.path.join(final_output_dir, 'checkpoint_334482.pth.tar')
+        print(f"Resuming Training, loading checkpoint {args.ckpt_name}...")
+        model_state_file = os.path.join(final_output_dir, args.ckpt_name)
         if os.path.isfile(model_state_file):
             checkpoint = torch.load(model_state_file)
             last_epoch = checkpoint['epoch']

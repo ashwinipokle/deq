@@ -6,6 +6,7 @@ from __future__ import print_function
 
 import argparse
 import os
+from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
@@ -19,16 +20,29 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 
 import torchvision.utils as tvu
 import wandb
 
+import numpy as np
+
 import time 
 import _init_paths
 import models
+from models.unet import UNetModel
+from models.hrnet import HighResolutionNet
+from models.hrnet_res import HighResolutionResNet
+from models.hrnet_swish import HighResolutionNetV2
+
 from config import config
 from config import update_config
+from core.diffusion_function import train
+from utils.modelsummary import get_model_summary
+from utils.utils import get_optimizer
+from utils.utils import save_checkpoint
 from utils.utils import create_logger
 from termcolor import colored
 from models.ema import EMAHelper
@@ -85,11 +99,6 @@ def parse_args():
         help="No interaction. Suitable for Slurm Job launcher",
     )
     parser.add_argument(
-        "--use_wandb",
-        action="store_true",
-        help="Use wandb for remote logs",
-    )
-    parser.add_argument(
         "--sample_type",
         type=str,
         default="generalized",
@@ -144,8 +153,13 @@ def main():
     # Create folder to save images
     if not os.path.exists(args.image_folder):
         os.mkdir(args.image_folder) 
-    model = eval('models.'+ config.MODEL.NAME+'.get_diffusion_net')(config).cuda()
     
+    #model = UNetModel(config).cuda()
+    #model = HighResolutionNet(config).cuda()
+    #model = HighResolutionResNet(config).cuda()
+    model = eval('models.' + config.MODEL.NAME +
+                 '.get_diffusion_net')(config)
+
     if config.TRAIN.MODEL_FILE:
         model.load_state_dict(torch.load(config.TRAIN.MODEL_FILE))
         logger.info(colored('=> loading model from {}'.format(config.TRAIN.MODEL_FILE), 'red'))
@@ -157,17 +171,18 @@ def main():
         shutil.rmtree(models_dst_dir)
     shutil.copytree(os.path.join(this_dir, '../lib/models'), models_dst_dir)
 
-    gpus = list(config.GPUS)
-    print("# Trainable parameters : ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    writer_dict = {
+        'writer': SummaryWriter(log_dir=tb_log_dir) if not config.DEBUG.DEBUG else None,
+        'train_global_steps': 0,
+        'valid_global_steps': 0,
+    }
 
+    gpus = list(config.GPUS)
     model = nn.DataParallel(model, device_ids=gpus).cuda()
     print("Finished constructing model!")
 
-    if not args.testModel:
-        model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
-    else:
-        model_state_file = os.path.join(final_output_dir, args.testModel)
-
+    model_state_file = os.path.join(final_output_dir, 'checkpoint_78591.pth.tar')
+    #model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
     if os.path.isfile(model_state_file):
         checkpoint = torch.load(model_state_file)
         model.module.load_state_dict(checkpoint['state_dict'])
@@ -263,15 +278,16 @@ def sample_image(x, model, args, config, last=True):
         else:
             raise NotImplementedError
 
-        remote_logger=None
-        if config.USE_REMOTE_LOGS:
+        logger=None
+        use_wandb = True
+        if use_wandb:
             wandb.init( project="DDIM-9-15", 
-                        name=f"DDIM-mdeq-temb-ema-upsample-{len(seq)}",
+                        name=f"DDIM-unet-{len(seq)}",
                         reinit=True,
                         config=config)
-            remote_logger = wandb.log
+            logger = wandb.log
 
-        xs = generalized_steps(x, seq, model, betas, logger=remote_logger, print_logs=False, eta=args.eta)
+        xs = generalized_steps(x, seq, model, betas, logger=logger, print_logs=False, eta=args.eta)
         x = xs
     else:
         raise NotImplementedError
@@ -299,7 +315,7 @@ def generalized_steps(x, seq, model, b, logger=None, print_logs=False, **kwargs)
             at = compute_alpha(b, t.long())
             at_next = compute_alpha(b, next_t.long())
             xt = xs[-1].to('cuda')
-            et = model(xt, t)[0]
+            et = model(xt, t)
             x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
             x0_preds.append(x0_t.to('cpu'))
             c1 = (
@@ -310,6 +326,7 @@ def generalized_steps(x, seq, model, b, logger=None, print_logs=False, **kwargs)
             xt_next = at_next.sqrt() * x0_t + c1 * noise_t + c2 * et
             xs.append(xt_next.to('cpu'))
 
+            # import pdb; pdb.set_trace()
             log_dict = {
                     "alpha at": torch.mean(at),
                     "alpha at_next": torch.mean(at_next),
@@ -323,6 +340,7 @@ def generalized_steps(x, seq, model, b, logger=None, print_logs=False, **kwargs)
             
             if logger is not None:
                 if i % 50 == 0 or i < 50:
+                    #import pdb; pdb.set_trace()
                     log_dict["samples"] = [wandb.Image(xt_next[i]) for i in range(min(xt_next.shape[0], 10))]
                 logger(log_dict)
             elif print_logs:
