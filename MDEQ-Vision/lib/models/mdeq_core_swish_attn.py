@@ -14,7 +14,6 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch._utils
 import torch.nn.functional as F
 import torch.autograd as autograd
@@ -570,7 +569,7 @@ class MDEQDiffNet(nn.Module):
         BLOCK_GN_AFFINE = cfg['MODEL']['BLOCK_GN_AFFINE']
         FUSE_GN_AFFINE = cfg['MODEL']['FUSE_GN_AFFINE']
         POST_GN_AFFINE = cfg['MODEL']['POST_GN_AFFINE']
-            
+    
     def _make_stage(self, layer_config, num_channels, dropout=0.0):
         """
         Build an MDEQ block with the given hyperparameters

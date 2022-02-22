@@ -149,7 +149,6 @@ def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, layer_loss=Tr
     nstep, lowest_xest, lowest_gx = 0, x_est, gx
 
     zm = []
-
     while nstep < threshold:
         x_est, gx, delta_x, delta_gx, ite = line_search(update, x_est, gx, g, nstep=nstep, on=ls)
         nstep += 1
@@ -188,7 +187,8 @@ def broyden(f, x0, threshold, eps=1e-3, stop_mode="rel", ls=False, layer_loss=Tr
         update = -matvec(Us[:,:,:,:nstep], VTs[:,:nstep], gx)
 
     if nstep < layer_idx[-1]:
-        zm.append(lowest_xest)
+        while len(zm) < len(layer_idx):
+            zm.append(lowest_xest)
 
     # Fill everything up to the threshold length
     for _ in range(threshold+1-len(trace_dict[stop_mode])):

@@ -6,7 +6,6 @@ from __future__ import print_function
 
 import argparse
 import os
-from pathlib import PureWindowsPath
 import pprint
 import shutil
 import sys
@@ -20,24 +19,16 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
 
 import torchvision.utils as tvu
 import wandb
-
-import numpy as np
 
 import time 
 import _init_paths
 import models
 from config import config
 from config import update_config
-from core.diffusion_function import train
-from utils.modelsummary import get_model_summary
-from utils.utils import get_optimizer
-from utils.utils import save_checkpoint
 from utils.utils import create_logger
 from termcolor import colored
 from models.ema import EMAHelper
@@ -92,6 +83,11 @@ def parse_args():
         "--ni",
         action="store_true",
         help="No interaction. Suitable for Slurm Job launcher",
+    )
+    parser.add_argument(
+        "--use_wandb",
+        action="store_true",
+        help="Use wandb for remote logs",
     )
     parser.add_argument(
         "--sample_type",
@@ -161,20 +157,17 @@ def main():
         shutil.rmtree(models_dst_dir)
     shutil.copytree(os.path.join(this_dir, '../lib/models'), models_dst_dir)
 
-    writer_dict = {
-        'writer': SummaryWriter(log_dir=tb_log_dir) if not config.DEBUG.DEBUG else None,
-        'train_global_steps': 0,
-        'valid_global_steps': 0,
-    }
-
     gpus = list(config.GPUS)
     print("# Trainable parameters : ", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
     model = nn.DataParallel(model, device_ids=gpus).cuda()
     print("Finished constructing model!")
 
-    model_state_file = os.path.join(final_output_dir, 'checkpoint_234991.pth.tar')
-    #model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
+    if not args.testModel:
+        model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
+    else:
+        model_state_file = os.path.join(final_output_dir, args.testModel)
+
     if os.path.isfile(model_state_file):
         checkpoint = torch.load(model_state_file)
         model.module.load_state_dict(checkpoint['state_dict'])
@@ -270,16 +263,15 @@ def sample_image(x, model, args, config, last=True):
         else:
             raise NotImplementedError
 
-        logger=None
-        use_wandb = True
-        if use_wandb:
+        remote_logger=None
+        if config.USE_REMOTE_LOGS:
             wandb.init( project="DDIM-9-15", 
                         name=f"DDIM-mdeq-temb-ema-upsample-{len(seq)}",
                         reinit=True,
                         config=config)
-            logger = wandb.log
+            remote_logger = wandb.log
 
-        xs = generalized_steps(x, seq, model, betas, logger=logger, print_logs=False, eta=args.eta)
+        xs = generalized_steps(x, seq, model, betas, logger=remote_logger, print_logs=False, eta=args.eta)
         x = xs
     else:
         raise NotImplementedError

@@ -182,7 +182,6 @@ def main():
     print("Finished constructing model!")
 
     model_state_file = os.path.join(final_output_dir, 'checkpoint_454801.pth.tar')
-    #model_state_file = os.path.join(final_output_dir, 'final_state.pth.tar')
     if os.path.isfile(model_state_file):
         checkpoint = torch.load(model_state_file)
         model.module.load_state_dict(checkpoint['state_dict'])

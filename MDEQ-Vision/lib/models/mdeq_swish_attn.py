@@ -246,7 +246,6 @@ class MDEQDiffusionNet(MDEQDiffNet):
             
             if y.shape[-1] in [16]:
                 y = self.attn(y)
-                
             if i > 0:
                 y = self.up_modules[i](y)
 

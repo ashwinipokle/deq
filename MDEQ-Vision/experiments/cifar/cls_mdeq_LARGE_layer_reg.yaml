@@ -1,4 +1,4 @@
-GPUS: (0,1,2,) #3)
+GPUS: (0,1,2,3)
 LOG_DIR: 'log/'
 DATA_DIR: ''
 OUTPUT_DIR: 'output-deq-swish-up-2layer/' #attn/'
@@ -9,7 +9,7 @@ MODEL:
   NAME: mdeq_swish_alt
   NUM_LAYERS: 20
   NUM_CLASSES: 10
-  NUM_GROUPS: 32 #4
+  NUM_GROUPS: 4
   DROPOUT: 0.22
   WNORM: true
   DOWNSAMPLE_TIMES: 0
@@ -22,7 +22,11 @@ MODEL:
     FULL_STAGE:
       NUM_MODULES: 1
       NUM_BRANCHES: 4
-      BLOCK: BASIC
+      BLOCK: #BASIC
+      - BASIC
+      - ATTN
+      - BASIC
+      - BASIC
       BIG_KERNELS:
       - 0
       - 0
@@ -40,9 +44,9 @@ MODEL:
       - 1
       - 1
       NUM_CHANNELS:
-      - 128 #32
-      - 256 #64
-      - 256 #128
+      - 32
+      - 64
+      - 128
       - 256
       FUSE_METHOD: SUM
 DEQ:
@@ -58,10 +62,10 @@ CUDNN:
   DETERMINISTIC: false
   ENABLED: true
 LOSS:
-  JAC_LOSS_FREQ: 0.0 #0.02
-  JAC_LOSS_WEIGHT: 0.0 #0.4
+  JAC_LOSS_FREQ: 0.02
+  JAC_LOSS_WEIGHT: 0.4
   PRETRAIN_JAC_LOSS_WEIGHT: 0.0
-  #JAC_STOP_EPOCH: 90
+  JAC_STOP_EPOCH: 90
   USE_LAYER_LOSS: True 
   GAMMA: 
   - 0.25
@@ -77,6 +81,7 @@ TEST:
   MODEL_FILE: ''
 TRAIN:
   BATCH_SIZE_PER_GPU: 64
+  MODEL_FILE: ''
   BEGIN_EPOCH: 0
   END_EPOCH: 3500
   RESUME: true

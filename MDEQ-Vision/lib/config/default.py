@@ -21,6 +21,7 @@ _C.PRINT_FREQ = 20
 _C.AUTO_RESUME = False
 _C.PIN_MEMORY = True
 _C.RANK = 0
+_C.USE_REMOTE_LOGS = False
 
 # Cudnn related params
 _C.CUDNN = CN()
@@ -51,6 +52,7 @@ _C.MODEL.IMAGE_SIZE = [256, 256]  # width * height, ex: 192 * 256
 _C.MODEL.HEATMAP_SIZE = [64, 64]  # width * height, ex: 24 * 32
 _C.MODEL.SIGMA = 2
 _C.MODEL.EXTRA = CN(new_allowed=True)
+_C.MODEL.INJECT_HIGHEST = True
 
 # Hyperparams related to DIFFUSION UNET
 _C.UNET_MODEL = CN()
@@ -118,7 +120,9 @@ _C.LOSS.TOPK = 8
 _C.LOSS.USE_TARGET_WEIGHT = True
 _C.LOSS.USE_DIFFERENT_JOINTS_WEIGHT = False
 _C.LOSS.USE_LAYER_LOSS = False 
-_C.LOSS.GAMMA = 0.01
+_C.LOSS.GAMMA = [0.01]
+_C.LOSS.USE_IMAGE_LOSS = False
+_C.LOSS.LAMBDA = 0.8
 
 # DATASET related params
 _C.DATASET = CN()
@@ -241,6 +245,9 @@ def update_config(cfg, args):
     if args.percent < 1:
         cfg.PERCENT = args.percent
     
+    if args.use_wandb:
+        cfg.USE_REMOTE_LOGS = args.use_wandb
+
     cfg.merge_from_list(args.opts)
 
     cfg.freeze()
