@@ -1,3 +1,5 @@
+# NOTE: The current branch for this repository is 2-stage-temb-swish-input 
+
 # Deep Equilibrium Models
 
 > (Version 2.0 released now! :grinning:)
