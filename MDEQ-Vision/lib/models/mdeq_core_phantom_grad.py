@@ -471,22 +471,12 @@ class Stage0Block(nn.Module):
 
         self.stage0_0 = nn.Sequential(nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
                                                 nn.GroupNorm(num_groups=NUM_GROUPS, num_channels=out_channels, eps=1e-6, affine=True),
-                                                #nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True)
                                                 )
-
-        # self.temb_proj = torch.nn.Linear(temb_channels, out_channels)
-
-        # self.stage0_1 = nn.Sequential(nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
-        #                             nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM, affine=True),
-        #                             nn.ReLU(inplace=True),
-        #                             nn.Dropout(dropout))
 
     def forward(self, x):
         h = x
         h = nonlinearity(self.stage0_0(x))
-        # h = h + self.temb_proj(nonlinearity(temb))[:, :, None, None]
-        # h = self.stage0_1(h)
-        return h #x+h
+        return h
 
 class MDEQDiffNet(nn.Module):
 
