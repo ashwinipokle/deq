@@ -604,5 +604,5 @@ class HighResolutionNet(nn.Module):
 
 def get_diffusion_net(cfg, **kwargs):
     model = HighResolutionNet(cfg, **kwargs)
-    model.init_weights(cfg.MODEL.PRETRAINED)
+    #model.init_weights(cfg.MODEL.PRETRAINED)
     return model

@@ -398,6 +398,7 @@ class HighResolutionResNet(nn.Module):
         block = blocks_dict[self.stage2_cfg['BLOCK']]
         num_channels = [
             num_channels[i] * block.expansion for i in range(len(num_channels))]
+
         self.transition1 = self._make_transition_layer(
             [stage1_out_channel], num_channels)
         self.stage2, pre_stage_channels = self._make_stage(

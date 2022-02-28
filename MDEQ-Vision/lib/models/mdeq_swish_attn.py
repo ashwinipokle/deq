@@ -11,7 +11,6 @@ import functools
 from termcolor import colored
 
 from collections import OrderedDict
-from models.mdeq_core_swish_alt import USE_RELU
 
 import numpy as np
 
@@ -34,6 +33,11 @@ DEQ_EXPAND = 5        # Don't change the value here. The value is controlled by 
 NUM_GROUPS = 4        # Don't change the value here. The value is controlled by the yaml files.
 
 logger = logging.getLogger(__name__)
+
+
+def nonlinearity(x):
+    # swish
+    return x*torch.sigmoid(x)
 
 def get_timestep_embedding(timesteps, embedding_dim):
     """
@@ -242,7 +246,6 @@ class MDEQDiffusionNet(MDEQDiffNet):
             
             if y.shape[-1] in [16]:
                 y = self.attn(y)
-
             if i > 0:
                 y = self.up_modules[i](y)
 
