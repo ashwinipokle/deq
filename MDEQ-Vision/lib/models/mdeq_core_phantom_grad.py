@@ -622,8 +622,8 @@ class MDEQDiffNet(nn.Module):
                                          layer_loss=self.layer_loss,
                                          name="forward")
                 z1 = result['result']
-                # if train_step % 50 == 0:
-                #     print("Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
+                #if train_step % 50 == 0:
+                #    print("Nstep ", result['nstep'], "rel_trace", min(result['rel_trace']), "abs_trace", min(result['abs_trace']))
             
             if self.training:
                 for _ in range(self.iter_steps):
