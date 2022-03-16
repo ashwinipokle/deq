@@ -194,7 +194,7 @@ def main():
                                   eta_min=1e-6)
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             logger.info("=> loaded checkpoint (epoch {})".format(checkpoint['epoch']))
-   
+ 
     # Learning rate scheduler
     if lr_scheduler is None:
         if config.TRAIN.LR_SCHEDULER != 'step':

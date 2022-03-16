@@ -1,12 +1,12 @@
 GPUS: (0,1,2,3)
 LOG_DIR: 'log/'
 DATA_DIR: ''
-OUTPUT_DIR: 'output-hrnet-v2'
+OUTPUT_DIR: 'output-hrnet-v4'
 WORKERS: 4
 PRINT_FREQ: 100
 
 MODEL: 
-  NAME: hrnet_v2 #hrnet_v4_unet_pred_head
+  NAME: hrnet_v4_unet_pred_head
   IMAGE_SIZE: 
     - 32
     - 32

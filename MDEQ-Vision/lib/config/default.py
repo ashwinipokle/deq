@@ -105,6 +105,8 @@ _C.DEQ.RAND_F_THRES_DELTA = 2
 _C.DEQ.F_THRES = 30
 _C.DEQ.B_THRES = 40
 _C.DEQ.SPECTRAL_RADIUS_MODE = False
+_C.DEQ.TAU = 0.5
+_C.DEQ.ITER_STEPS = 6
 
 _C.LOSS = CN()
 _C.LOSS.JAC_LOSS_FREQ = 0.0
@@ -245,7 +247,7 @@ def update_config(cfg, args):
     if args.percent < 1:
         cfg.PERCENT = args.percent
     
-    if args.use_wandb:
+    if hasattr(args, 'use_wandb') and args.use_wandb:
         cfg.USE_REMOTE_LOGS = args.use_wandb
 
     cfg.merge_from_list(args.opts)

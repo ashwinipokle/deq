@@ -264,7 +264,7 @@ def sample_image(x, model, args, config, last=True):
             raise NotImplementedError
 
         remote_logger=None
-        if config.USE_REMOTE_LOGS:
+        if config.USE_REMOTE_LOGS or args.use_wandb:
             wandb.init( project="DDIM-9-15", 
                         name=f"DDIM-mdeq-temb-ema-upsample-{len(seq)}",
                         reinit=True,
